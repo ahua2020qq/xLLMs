@@ -1,0 +1,87 @@
+name: Bug Report
+description: Report a bug in nxtLLM
+title: "[Bug]: "
+labels: ["bug", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: input
+    id: version
+    attributes:
+      label: nxtLLM Version
+      description: Which version or commit are you running?
+      placeholder: "e.g., v0.1.0, commit abc1234"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. Build with '...'
+        2. Run '...'
+        3. Observe '...'
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include error messages, stack traces, or logs.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      multiple: true
+      options:
+        - Page Pool / Memory Manager
+        - LRU-K Eviction
+        - Page Allocator
+        - Request Scheduler
+        - Build System / CMake
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: |
+        - OS: [e.g., Ubuntu 22.04, macOS 14]
+        - Compiler: [e.g., GCC 13.1, Clang 17.0]
+        - CMake version:
+        - GPU (if applicable):
+      value: |
+        - OS:
+        - Compiler:
+        - CMake:
+        - GPU:
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context, screenshots, or relevant information.

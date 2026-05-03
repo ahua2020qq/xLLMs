@@ -1,0 +1,43 @@
+name: Documentation Improvement
+description: Report missing, outdated, or incorrect documentation
+title: "[Docs]: "
+labels: ["documentation", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us improve the documentation!
+  - type: dropdown
+    id: type
+    attributes:
+      label: Issue Type
+      options:
+        - Missing documentation
+        - Outdated documentation
+        - Incorrect / misleading documentation
+        - Typo or formatting issue
+        - Enhancement (reorganize, improve clarity)
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: Which file, section, or page needs attention?
+      placeholder: "e.g., README.md#architecture, include/page_pool.h"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What needs to be changed and why?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Change
+      description: If you have a specific suggestion, write it here.
+      render: markdown

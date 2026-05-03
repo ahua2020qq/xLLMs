@@ -1,0 +1,48 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for nxtLLM
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for suggesting a feature! Please describe the problem and your proposed solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? Why is it needed?
+      placeholder: "I'm always frustrated when ..."
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you'd like to see. Include API sketches or design ideas if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What alternative approaches have you considered?
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - Core engine (page pool / LRU-K / allocator)
+        - Scheduler / admission control
+        - Build system / tooling
+        - Documentation
+        - Testing infrastructure
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: References, benchmarks, or related issues/PRs.

@@ -1,5 +1,10 @@
 # nxtLLM V0.1 — Next-Generation LLM Inference Engine
 
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Code of Conduct](https://img.shields.io/badge/Conduct-Contributor%20Covenant%202.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+[![Contributing](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Security](https://img.shields.io/badge/security-report%20vulnerability-orange.svg)](SECURITY.md)
+
 nxtLLM is a high-performance LLM inference engine with a multi-tier memory management system.
 It implements LRU-K page eviction, tier-aware page allocation (GPU HBM → CPU DRAM → NVMe SSD),
 and admission control for concurrent inference requests.
@@ -136,6 +141,14 @@ nxtLLM/
 │   └── test_page_pool.c
 └── docs/
 ```
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for code style (C11),
+build instructions, testing guidelines, and the PR checklist.
+
+All contributors must follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+For security issues, see [SECURITY.md](SECURITY.md).
 
 ## License
 
