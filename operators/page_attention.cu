@@ -176,19 +176,155 @@ void nxt_paged_attention(
     dim3 grid(num_heads, num_seqs);
     dim3 block(NUM_THREADS);
 
-    int padded_seq_len = DIVIDE_ROUND_UP(2048, BLOCK_SIZE) * BLOCK_SIZE;
-    int shared_mem_size = padded_seq_len * sizeof(float) + HEAD_SIZE * sizeof(float);
+    int padded_seq_len = DIVIDE_ROUND_UP(max_num_blocks_per_seq * BLOCK_SIZE, WARP_SIZE) * WARP_SIZE;
+    int shared_mem_size = padded_seq_len * sizeof(float) + head_size * sizeof(float);
 
-    // NOTE: Full dispatch by head_size would be added here.
-    // This implementation provides the algorithmic foundation;
-    // switch-cases for HEAD_SIZE={32,64,80,96,112,128,192,256}
-    // are generated during production compilation.
-    //
-    // Template instantiation example:
-    //   paged_attention_v1_kernel<half, half, 64, 16, 128>
-    //       <<<grid, block, shared_mem_size, stream>>>(
-    //           (half*)out, (half*)query, (half*)key_cache, (half*)value_cache,
-    //           block_tables, seq_lens, max_num_blocks_per_seq, scale,
-    //           num_kv_heads, num_seqs*num_heads*head_size,
-    //           kv_block_stride, kv_head_stride);
+    const int q_stride = num_seqs * num_heads * head_size;
+
+    // Dispatch by dtype, then by head_size
+    if (dtype_size == 2) {
+        // ── fp16 ──────────────────────────────────────────────────────
+        typedef __half scalar_t;
+        typedef __half cache_t;
+        switch (head_size) {
+            case 32:
+                paged_attention_v1_kernel<scalar_t, cache_t, 32, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 64:
+                paged_attention_v1_kernel<scalar_t, cache_t, 64, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 80:
+                paged_attention_v1_kernel<scalar_t, cache_t, 80, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 96:
+                paged_attention_v1_kernel<scalar_t, cache_t, 96, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 112:
+                paged_attention_v1_kernel<scalar_t, cache_t, 112, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 128:
+                paged_attention_v1_kernel<scalar_t, cache_t, 128, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 192:
+                paged_attention_v1_kernel<scalar_t, cache_t, 192, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 256:
+                paged_attention_v1_kernel<scalar_t, cache_t, 256, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            default:
+                break;
+        }
+    } else {
+        // ── fp32 ──────────────────────────────────────────────────────
+        typedef float scalar_t;
+        typedef float cache_t;
+        switch (head_size) {
+            case 32:
+                paged_attention_v1_kernel<scalar_t, cache_t, 32, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 64:
+                paged_attention_v1_kernel<scalar_t, cache_t, 64, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 80:
+                paged_attention_v1_kernel<scalar_t, cache_t, 80, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 96:
+                paged_attention_v1_kernel<scalar_t, cache_t, 96, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 112:
+                paged_attention_v1_kernel<scalar_t, cache_t, 112, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 128:
+                paged_attention_v1_kernel<scalar_t, cache_t, 128, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 192:
+                paged_attention_v1_kernel<scalar_t, cache_t, 192, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            case 256:
+                paged_attention_v1_kernel<scalar_t, cache_t, 256, 16, 128>
+                    <<<grid, block, shared_mem_size, stream>>>(
+                        (scalar_t*)out, (const scalar_t*)query,
+                        (const cache_t*)key_cache, (const cache_t*)value_cache,
+                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
+                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
+                break;
+            default:
+                break;
+        }
+    }
 }

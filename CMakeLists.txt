@@ -54,8 +54,20 @@ add_executable(test_page_pool
 target_link_libraries(test_page_pool nxtllm_core)
 add_test(NAME page_pool_tests COMMAND test_page_pool)
 
+math(EXPR NXTLLM_CUDART_VERSION
+    "${CUDAToolkit_VERSION_MAJOR} * 1000 + ${CUDAToolkit_VERSION_MINOR} * 10")
+
 add_executable(test_attention
     tests/test_attention.c
 )
-target_link_libraries(test_attention nxtllm_operators)
+target_include_directories(test_attention PRIVATE
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+target_compile_definitions(test_attention PRIVATE
+    CUDART_VERSION=${NXTLLM_CUDART_VERSION}
+)
+target_link_libraries(test_attention
+    nxtllm_operators
+    CUDA::cudart
+)
 add_test(NAME attention_tests COMMAND test_attention)

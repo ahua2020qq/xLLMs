@@ -29,6 +29,13 @@ typedef void* nxt_stream_t;
 /**
  * Compute multi-head paged attention over KV-cache blocks.
  *
+ * Dispatches at runtime by dtype_size (2 → fp16, 4 → fp32) and
+ * head_size.  Supported head_size values:
+ *   32, 64, 80, 96, 112, 128, 192, 256
+ *
+ * Kernel: paged_attention_v1_kernel<scalar_t, cache_t, HEAD_SIZE, 16, 128>
+ * Uses online-softmax with warp-parallel reduction over paged KV blocks.
+ *
  * @param out                [num_seqs, num_heads, head_size] output tensor
  * @param query              [num_seqs, num_heads, head_size] query tensor
  * @param key_cache          [num_blocks, ...] paged key tensor
@@ -37,11 +44,11 @@ typedef void* nxt_stream_t;
  * @param seq_lens           [num_seqs] int32 sequence lengths
  * @param num_seqs           batch size
  * @param num_heads          number of query heads
- * @param head_size          dimension per head
+ * @param head_size          dimension per head (must be in supported set)
  * @param num_kv_heads       number of KV heads (for GQA/MQA)
  * @param scale              softmax scale (1/sqrt(head_size))
  * @param max_num_blocks_per_seq  max blocks per sequence
- * @param block_size         tokens per KV-cache block
+ * @param block_size         tokens per KV-cache block (typically 16)
  * @param dtype_size         sizeof(element): 2 (fp16), 4 (fp32)
  * @param kv_block_stride    stride between KV blocks (in elements)
  * @param kv_head_stride     stride between KV heads (in elements)
