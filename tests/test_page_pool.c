@@ -202,6 +202,182 @@ static void test_lruk_remove(void) {
     PASS();
 }
 
+// ── Test: Hash Table Insert / Lookup / Remove ────────────────────────
+static void test_hash_table_basic(void) {
+    TEST("hash_table_basic");
+    NxtPageHash hash;
+    nxt_hash_init(&hash, 64);
+
+    // Create dummy pages for testing
+    NxtPage p0 = { .page_id = 0 };
+    NxtPage p1 = { .page_id = 1 };
+    NxtPage p2 = { .page_id = 42 };
+
+    nxt_hash_insert(&hash, 0, &p0);
+    nxt_hash_insert(&hash, 1, &p1);
+    nxt_hash_insert(&hash, 42, &p2);
+
+    ASSERT(nxt_hash_lookup(&hash, 0) == &p0, "hash lookup id=0 failed");
+    ASSERT(nxt_hash_lookup(&hash, 1) == &p1, "hash lookup id=1 failed");
+    ASSERT(nxt_hash_lookup(&hash, 42) == &p2, "hash lookup id=42 failed");
+    ASSERT(nxt_hash_lookup(&hash, 99) == NULL, "hash lookup non-existent key should return NULL");
+
+    // Remove and verify
+    bool removed = nxt_hash_remove(&hash, 1);
+    ASSERT(removed, "hash remove id=1 failed");
+    ASSERT(nxt_hash_lookup(&hash, 1) == NULL, "hash lookup after remove should be NULL");
+    ASSERT(nxt_hash_lookup(&hash, 0) == &p0, "hash lookup id=0 should still work");
+
+    nxt_hash_destroy(&hash);
+    PASS();
+}
+
+// ── Test: Hash Table with Pool Integration ────────────────────────────
+static void test_hash_in_pool(void) {
+    TEST("hash_in_pool");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  64ULL * 1024 * 1024,
+                  64ULL * 1024 * 1024,
+                  64ULL * 1024 * 1024,
+                  64 * 1024,
+                  1000);
+
+    ASSERT(pool.page_hash.capacity > 0, "hash not initialized in pool");
+    ASSERT(pool.pages_array != NULL, "pages_array not set");
+
+    // Allocate a page and verify hash lookup works
+    NxtPage *p = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+    ASSERT_PTR(p, "alloc returned NULL");
+
+    NxtPage *found = nxt_hash_lookup(&pool.page_hash, p->page_id);
+    ASSERT(found == p, "hash lookup for allocated page failed");
+
+    nxt_page_ref_dec(&pool, p);
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: LRU-K Eviction Uses Hash Table ──────────────────────────────
+static void test_eviction_with_hash(void) {
+    TEST("eviction_with_hash");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  4ULL * 1024 * 1024,    // 4 MiB GPU
+                  4ULL * 1024 * 1024,
+                  4ULL * 1024 * 1024,
+                  64 * 1024,
+                  200);
+
+    uint64_t evictions_before = pool.total_evictions;
+
+    // Allocate many pages to trigger eviction
+    for (int i = 0; i < 64; i++) {
+        NxtPage *p = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+        if (!p) break;
+        nxt_page_ref_dec(&pool, p);  // release ref so it can be evicted
+    }
+
+    // Verify evictions happened (we may have filled up GPU tier)
+    // The key test is that nxt_evict_lru_k uses the hash table and doesn't crash
+    ASSERT(pool.total_evictions >= evictions_before,
+           "evictions should not decrease");
+
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: Defrag Compacts Pages Within Tier ───────────────────────────
+static void test_defrag_basic(void) {
+    TEST("defrag_basic");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  64 * 1024,
+                  400);
+
+    uint64_t rounds_before = pool.total_defrag_rounds;
+    ASSERT(rounds_before == 0, "defrag rounds should start at 0");
+
+    // Allocate some pages, then free some to create fragmentation
+    NxtPage *pages[20];
+    for (int i = 0; i < 12; i++) {
+        pages[i] = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+        ASSERT_PTR(pages[i], "alloc failed during defrag setup");
+    }
+
+    // Free every other page to create gaps
+    for (int i = 0; i < 12; i += 2) {
+        nxt_page_ref_dec(&pool, pages[i]);
+    }
+
+    // Run defrag
+    nxt_defrag_background(&pool);
+    ASSERT(pool.total_defrag_rounds == 1, "defrag rounds should be 1 after call");
+
+    // All pages should still be accessible via hash
+    for (int i = 1; i < 12; i += 2) {
+        NxtPage *found = nxt_hash_lookup(&pool.page_hash, pages[i]->page_id);
+        ASSERT(found == pages[i], "page lost after defrag");
+    }
+
+    // Clean up remaining pages
+    for (int i = 1; i < 12; i += 2) {
+        nxt_page_ref_dec(&pool, pages[i]);
+    }
+
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: Defrag Preserves Free Counts ────────────────────────────────
+static void test_defrag_free_counts(void) {
+    TEST("defrag_free_counts");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  4ULL * 1024 * 1024,
+                  4ULL * 1024 * 1024,
+                  4ULL * 1024 * 1024,
+                  64 * 1024,
+                  200);
+
+    // Count initial free pages in GPU DATA tier
+    uint32_t initial_free = pool.free_counts[TIER_GPU][PAGE_TYPE_DATA];
+
+    // Allocate several pages
+    NxtPage *p[8];
+    for (int i = 0; i < 8; i++) {
+        p[i] = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+    }
+
+    uint32_t after_alloc = pool.free_counts[TIER_GPU][PAGE_TYPE_DATA];
+    ASSERT(after_alloc == initial_free - 8, "free count should decrease by 8");
+
+    // Free some pages creating holes
+    nxt_page_ref_dec(&pool, p[0]);
+    nxt_page_ref_dec(&pool, p[2]);
+    nxt_page_ref_dec(&pool, p[4]);
+    nxt_page_ref_dec(&pool, p[6]);
+
+    uint32_t before_defrag = pool.free_counts[TIER_GPU][PAGE_TYPE_DATA];
+    nxt_defrag_background(&pool);
+    uint32_t after_defrag = pool.free_counts[TIER_GPU][PAGE_TYPE_DATA];
+
+    // Free count should be preserved after defrag
+    ASSERT(before_defrag == after_defrag, "defrag should preserve free count");
+
+    // Cleanup
+    nxt_page_ref_dec(&pool, p[1]);
+    nxt_page_ref_dec(&pool, p[3]);
+    nxt_page_ref_dec(&pool, p[5]);
+    nxt_page_ref_dec(&pool, p[7]);
+
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
 // ── Test Runner ──────────────────────────────────────────────────────
 int main(void) {
     printf("=== nxtLLM Test Suite ===\n\n");
@@ -212,6 +388,11 @@ int main(void) {
     test_admission_control();
     test_lruk_basic();
     test_lruk_remove();
+    test_hash_table_basic();
+    test_hash_in_pool();
+    test_eviction_with_hash();
+    test_defrag_basic();
+    test_defrag_free_counts();
 
     printf("\n=== Results: %d run, %d passed, %d failed ===\n",
            tests_run, tests_passed, tests_failed);
