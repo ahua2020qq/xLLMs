@@ -2,10 +2,10 @@ option(USE_CUDA "Enable CUDA support" OFF)
 
 if(USE_CUDA)
     cmake_minimum_required(VERSION 3.16)
-    project(nxtLLM VERSION 0.3.0 LANGUAGES C CXX CUDA)
+    project(nxtLLM VERSION 0.4.0 LANGUAGES C CXX CUDA)
 else()
     cmake_minimum_required(VERSION 3.16)
-    project(nxtLLM VERSION 0.3.0 LANGUAGES C CXX)
+    project(nxtLLM VERSION 0.4.0 LANGUAGES C CXX)
 endif()
 
 set(CMAKE_C_STANDARD 11)

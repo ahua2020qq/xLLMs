@@ -1,4 +1,4 @@
-# nxtLLM V0.2 — Next-Generation LLM Inference Engine
+# nxtLLM V0.4 — Next-Generation LLM Inference Engine
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Conduct-Contributor%20Covenant%202.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
@@ -7,21 +7,27 @@
 
 nxtLLM is a high-performance LLM inference engine with a multi-tier memory management system.
 It implements LRU-K page eviction, tier-aware page allocation (GPU HBM → CPU DRAM → NVMe SSD),
-and admission control for concurrent inference requests.
+prefix-sharing radix tree for KV-cache reuse, and admission control for concurrent inference requests.
 
 > **本项目由 [山野小娃](https://github.com/ahua2020qq)、[DeepSeek](https://github.com/deepseek-ai) 和 [豆包](https://www.doubao.com) 共同设计。**
 >
-> 感谢 [vLLM](https://github.com/vllm-project/vllm) 和 [Llama.cpp](https://github.com/ggerganov/llama.cpp) 为开源 LLM 推理社区做出的卓越贡献，nxtLLM 未来将参考这些成熟项目中已验证的设计理念。
+> 感谢以下开源项目及其社区为 LLM 推理领域做出的卓越贡献：
 >
-> 衷心希望大模型推理能够更快进入 v1.0+ 时代 —— v0.20.X 的漫长过渡，着实让人有些尴尬。
+> - **[vLLM](https://github.com/vllm-project/vllm)** — PagedAttention 与连续批处理启发
+> - **[Llama.cpp](https://github.com/ggerganov/llama.cpp)** — 轻量化 CPU 推理与 GGUF 量化
+> - **[SGLang](https://github.com/sgl-project/sglang)** — RadixCache 前缀共享设计（已集成）
+> - **[FlashInfer](https://github.com/flashinfer-ai/flashinfer)** — 通用注意力内核（未来参考）
+>
+> nxtLLM 的成长离不开这些优秀项目的智慧。衷心希望大模型推理能够更快进入 v1.0+ 时代 —— v0.20.X 的漫长过渡，着实让人有些尴尬。
 
 ## Project Goals
 
 - **Efficient memory utilization**: Three-tier buffer pool spanning GPU, CPU, and SSD storage
 - **Intelligent page eviction**: LRU-K (K=3) algorithm prevents thrashing of recently accessed pages
+- **Prefix-aware KV-cache sharing**: Radix tree indexes token sequences for cross-request cache reuse
 - **Request-aware scheduling**: Per-request page directories with admission control
 - **Background defragmentation**: Coalesces free pages to reduce fragmentation
-- **Modular architecture**: Clean separation of page pool, LRU-K, and memory manager layers
+- **Modular architecture**: Clean separation of page pool, LRU-K, prefix tree, and memory manager layers
 - **GPU-accelerated operators**: Paged attention, activation kernels (SiLU/GELU), and KV-cache management
 
 ## Architecture (5-Layer Design)
@@ -30,14 +36,14 @@ and admission control for concurrent inference requests.
 +═══════════════════════════════════════════════════════════════+
 ║                    LAYER 5: INFERENCE ENGINE                  ║
 ║   Model runner, tokenizer, KV-cache manager, sampler          ║
-║   (future: inference_runner.c, kv_cache.c, sampler.c)         ║
+║   (inference_runner.c, transformer_block.c, tokenizer.c)      ║
 +═══════════════════════════════════════════════════════════════+
                               │
                               ▼
 +═══════════════════════════════════════════════════════════════+
 ║                 LAYER 4: REQUEST SCHEDULER                    ║
 ║   Admission control, request queue, priority management       ║
-║   (future: scheduler.c, admission.c)                          ║
+║   (prefix_sharing.c — radix tree KV-cache index)              ║
 +═══════════════════════════════════════════════════════════════+
                               │
                               ▼
@@ -62,30 +68,44 @@ and admission control for concurrent inference requests.
 +═══════════════════════════════════════════════════════════════+
 ```
 
-## What's New in v0.2
+## What's New
 
-### GPU Operators (`operators/`)
+### v0.4 — Prefix Sharing Radix Tree
 
-nxtLLM v0.2 introduces a dedicated operator library with CUDA-accelerated kernels:
+SGLang RadixCache 启发的前缀共享基数树，实现跨请求 KV-cache 复用：
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| **Radix Tree API** | `include/prefix_sharing.h` | 前缀匹配、插入、淘汰、锁定接口 |
+| **Radix Tree 实现** | `src/core/prefix_sharing.c` | 基数树节点分裂/合并、LRU 淘汰、与三级页池集成 |
+| **测试** | `tests/test_prefix_sharing.c` | 9 个测试用例覆盖完整功能 |
+| **设计分析** | `docs/design/sglang_radixcache_analysis.md` | SGLang RadixCache 源码分析与 nxtLLM 适配方案 |
+
+核心能力：
+- `nxt_prefix_match()` — O(L) 最长前缀匹配，返回缓存的 page_id 列表
+- `nxt_prefix_insert()` — O(L) 插入，自动节点分裂实现前缀共享
+- `nxt_prefix_evict()` — LRU 叶节点淘汰，与页池联动释放内存
+- `nxt_prefix_lock/unlock()` — 请求级引用保护，防止活跃前缀被驱逐
+
+### v0.3 — GPT-2 Inference Engine + CUDA Optional
+
+- **TransformerBlock**：LayerNorm → QKV → Paged Attention → FFN → GELU 完整前向传播
+- **BPE Tokenizer**：256 词表，支持 encode/decode
+- **Decode Loop**：自回归解码，集成 KV-cache 和 LM Head 投影
+- **run_gpt2 示例**：自包含的 GPT-2 推理 demo
+- **CUDA 可选**：`-DUSE_CUDA=ON` 启用，默认纯 CPU 构建
+
+### v0.2 — GPU Operators
 
 | Operator | File | Description |
 |---|---|---|
-| **Paged Attention** | `operators/page_attention.cu` | Multi-head attention over paged KV-cache blocks. Supports GQA/MQA with configurable block sizes and head dimensions. Adapted from the vLLM paged_attention_v1 kernel. |
-| **SiLU & Mul** | `operators/activation_kernels.cu` | Fused SiLU-gate + element-wise multiply (silu_and_mul / mul_and_silu). |
-| **GELU & Mul** | `operators/activation_kernels.cu` | Fused GELU-gate + multiply with "none" and "tanh" approximations. |
-| **Element-wise Activations** | `operators/activation_kernels.cu` | Standalone SiLU and GELU element-wise kernels. |
-| **KV-Cache Config** | `operators/cache.py` | Python configuration dataclass for block size, memory utilization, cache dtype, and prefix caching. |
+| **Paged Attention** | `operators/page_attention.cu` | Multi-head attention over paged KV-cache blocks. Supports GQA/MQA. |
+| **SiLU & Mul** | `operators/activation_kernels.cu` | Fused SiLU-gate + element-wise multiply. |
+| **GELU & Mul** | `operators/activation_kernels.cu` | Fused GELU-gate + multiply (none/tanh approximations). |
+| **Element-wise Activations** | `operators/activation_kernels.cu` | Standalone SiLU and GELU kernels. |
+| **KV-Cache Config** | `operators/cache.py` | Python dataclass for cache dtype, prefix caching, multi-tier blocks. |
 
-All GPU kernels are exposed through a unified C API defined in `include/operator_api.h`.
-
-### Key Changes
-
-- **New** `nxtllm_operators` static library with CUDA compilation
-- **New** `include/operator_api.h` — unified C API for all GPU operators
-- **New** `operators/cache.py` — KV-cache configuration module
-- **New** `tests/test_attention.c` — operator API signature and smoke tests
-- CMakeLists.txt updated: C++17/CUDA17, CUDA Toolkit required, SM 75/80/86/89/90 targets
-- `gptq_kernels.cu` deferred to v0.3 (quantization pipeline requires additional dependencies)
+All GPU kernels are exposed through a unified C API in `include/operator_api.h`.
 
 ## Core Data Structures
 
@@ -108,47 +128,70 @@ Tracks the 3 most recent access timestamps for each page. Victim selection uses
 the oldest (k-th) timestamp, which captures long-term access patterns and avoids
 evicting pages with only a single recent access burst.
 
+### NxtPrefixTree (Radix Tree)
+Token-sequence radix tree indexing KV-cache pages for prefix sharing across requests.
+Each node stores a token fragment, associated page_ids, and a lock_ref counter for
+request-level eviction protection.
+
 ## Quick Start
 
 ### Prerequisites
 
 - CMake >= 3.16
 - C11/C++17-compliant compiler (GCC >= 9, Clang >= 10)
-- CUDA Toolkit >= 11.8
-- NVIDIA driver >= 525 (SM 75+)
+- *(Optional)* CUDA Toolkit >= 11.8, NVIDIA driver >= 525 (SM 75+)
 
 ### Build & Run
 
 ```sh
 git clone <repo-url> && cd nxtLLM
 
-# Configure and build
+# CPU-only build (default)
 cmake -B build -S .
+cmake --build build
+
+# With CUDA support
+cmake -B build -S . -DUSE_CUDA=ON
 cmake --build build
 
 # Run tests
 cd build && ctest --output-on-failure
+
+# Run GPT-2 demo (random weights)
+./run_gpt2
 ```
 
 ### Basic Usage
 
 ```c
 #include "page_pool.h"
-#include "operator_api.h"
+#include "prefix_sharing.h"
 
 int main() {
+    /* Initialize tiered buffer pool */
     NxtGlobalBufferPool pool;
     nxt_pool_init(&pool,
-                  /* GPU */ 4ULL * 1024 * 1024 * 1024,  // 4 GiB
-                  /* CPU */ 16ULL * 1024 * 1024 * 1024, // 16 GiB
-                  /* SSD */ 64ULL * 1024 * 1024 * 1024, // 64 GiB
-                  /* page_size */ 64 * 1024,
+                  /* GPU */ 4ULL << 30,    // 4 GiB
+                  /* CPU */ 16ULL << 30,   // 16 GiB
+                  /* SSD */ 64ULL << 30,   // 64 GiB
+                  /* page_size */ 64 << 10,
                   /* max_pages */ 100000);
 
-    NxtPage *page = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
-    // ... use page->data ...
-    nxt_page_ref_dec(&pool, page);
+    /* Initialize prefix-sharing radix tree */
+    NxtPrefixTree tree;
+    nxt_prefix_tree_init(&tree, &pool);
 
+    /* Insert a cached prefix */
+    int32_t tokens[] = {1, 2, 3, 4, 5};
+    uint32_t pages[] = {100, 101, 102, 103, 104};
+    nxt_prefix_insert(&tree, tokens, 5, pages, 5, 0);
+
+    /* Match longest cached prefix for a new request */
+    NxtMatchResult match = nxt_prefix_match(&tree, tokens, 5);
+    // match.page_ids — reusable KV-cache pages
+    // match.matched_tokens — number of tokens to skip in prefill
+
+    nxt_prefix_tree_destroy(&tree);
     nxt_pool_destroy(&pool);
     return 0;
 }
@@ -160,8 +203,10 @@ int main() {
 nxtLLM/
 ├── CMakeLists.txt
 ├── README.md
+├── LICENSE
 ├── include/
-│   └── operator_api.h          # GPU operator C API (v0.2)
+│   ├── operator_api.h          # GPU operator C API (v0.2)
+│   └── prefix_sharing.h       # Radix tree API (v0.4)
 ├── operators/
 │   ├── page_attention.cu       # Paged attention kernel (v0.2)
 │   ├── activation_kernels.cu   # SiLU/GELU activation kernels (v0.2)
@@ -169,32 +214,65 @@ nxtLLM/
 ├── src/
 │   ├── include/
 │   │   ├── page_pool.h
-│   │   └── lru_k.h
-│   └── core/
-│       └── memory_manager.c
+│   │   ├── lru_k.h
+│   │   ├── transformer_block.h # (v0.3)
+│   │   ├── tokenizer.h         # (v0.3)
+│   │   ├── decoder.h           # (v0.3)
+│   │   └── weight_loader.h     # (v0.3)
+│   ├── core/
+│   │   ├── memory_manager.c
+│   │   ├── lru_k.c
+│   │   └── prefix_sharing.c    # Radix tree implementation (v0.4)
+│   └── inference/
+│       ├── transformer_block.c  # (v0.3)
+│       ├── tokenizer.c          # (v0.3)
+│       ├── decode_loop.c        # (v0.3)
+│       └── weight_loader.c      # (v0.3)
+├── examples/
+│   └── run_gpt2.c              # GPT-2 inference demo (v0.3)
 ├── tests/
 │   ├── test_page_pool.c
-│   └── test_attention.c        # Operator API tests (v0.2)
+│   ├── test_attention.c        # (v0.2)
+│   └── test_prefix_sharing.c  # (v0.4)
+├── scripts/
+│   └── convert_gpt2_weights.py # (v0.3)
 └── docs/
+    ├── architecture.md
+    ├── memory-manager.md
+    ├── lru-k-eviction.md
+    ├── api-reference.md
+    └── design/
+        └── sglang_radixcache_analysis.md  # (v0.4)
 ```
 
 ## Roadmap
 
-### v0.1 (current)
+### v0.1 ✅
 - [x] Three-tier buffer pool (GPU/CPU/SSD)
 - [x] LRU-K (K=3) page eviction
 - [x] Page allocation and reference counting
 - [x] Basic test suite
 
-### v0.2
+### v0.2 ✅
 - [x] Paged attention CUDA kernel
 - [x] Activation kernels (SiLU, GELU)
 - [x] KV-cache configuration module
 - [x] Unified operator C API
 
-### v0.3 (planned)
+### v0.3 ✅
+- [x] GPT-2 inference engine (TransformerBlock, tokenizer, decode loop)
+- [x] CUDA optional build (`-DUSE_CUDA=ON`)
+- [x] run_gpt2 example with random weights
+
+### v0.4 ✅ (current)
+- [x] Prefix-sharing radix tree (SGLang RadixCache inspired)
+- [x] Cross-request KV-cache reuse via `nxt_prefix_match/insert`
+- [x] LRU eviction with request-level lock protection
+- [x] 9 test cases covering insert, match, split, lock, eviction
+
+### v0.5 (planned)
 - [ ] GPTQ / AWQ quantization kernels
-- [ ] FlashAttention integration
+- [ ] FlashInfer attention integration
 - [ ] CUDA graph capture for decode phase
 - [ ] Benchmarking harness
 
