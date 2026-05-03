@@ -380,17 +380,18 @@ nxtLLM/
 
 ### Competitive Positioning
 
-| Dimension | nxtLLM | vLLM | SGLang | Llama.cpp |
-|-----------|--------|------|--------|-----------|
+| Dimension | nxtLLM v0.5 | vLLM | SGLang | Llama.cpp |
+|-----------|-------------|------|--------|-----------|
 | Three-tier storage | ✅ GPU/CPU/SSD | GPU/CPU | GPU/CPU | CPU/Disk |
 | Prefix sharing | ✅ Radix tree | ❌ | ✅ RadixCache | ❌ |
-| LRU-K eviction | ✅ K=3 | LRU | Pluggable | LRU |
-| GPU operators | ✅ Optional | ✅ Full | ✅ Full | ❌ CPU only |
+| LRU-K eviction | ✅ K=3 + O(1) hash | LRU | Pluggable | LRU |
+| Defragmentation | ✅ Per-tier compaction | ❌ | ❌ | ❌ |
+| GPU operators | ✅ V1 + V2 pipeline | ✅ Full | ✅ Full | ❌ CPU only |
 | Inference engine | 🔶 GPT-2 demo | ✅ Multi-model | ✅ Multi-model | ✅ Multi-model |
 | Quantization | ❌ | ✅ GPTQ/AWQ | ✅ | ✅ GGUF |
 | Production ready | ❌ | ✅ | ✅ | ✅ |
 
-nxtLLM is currently an **architecture research project** with unique memory management design (three-tier storage + LRU-K + prefix sharing). It requires a full scheduler, multi-model support, quantization, and performance optimization before production deployment.
+nxtLLM 在内存管理维度（三层存储、LRU-K+哈希、碎片整理、前缀共享）已形成差异化优势。需要补齐调度器、多模型支持、量化才能进入生产级。
 
 ### v0.6 Priorities
 
