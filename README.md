@@ -393,6 +393,7 @@ Thanks to the following contributors who made this project possible:
 | **山野小娃** ([@ahua2020qq](https://github.com/ahua2020qq)) | Project lead, architecture design, core implementation |
 | **DeepSeek** ([@deepseek-ai](https://github.com/deepseek-ai)) | Co-design, architectural guidance |
 | **豆包** ([Doubao](https://www.doubao.com)) | Co-design, inference optimization insights |
+| **GLM** ([@THUDM](https://github.com/THUDM)) | Co-design, model architecture insights |
 
 ## Contributing
 

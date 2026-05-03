@@ -33,6 +33,13 @@
       "avatar_url": "https://www.doubao.com/favicon.ico",
       "profile": "https://www.doubao.com",
       "contributions": ["design", "ideas"]
+    },
+    {
+      "login": "THUDM",
+      "name": "GLM",
+      "avatar_url": "https://avatars.githubusercontent.com/u/83596290",
+      "profile": "https://github.com/THUDM",
+      "contributions": ["design", "ideas"]
     }
   ]
 }
