@@ -1,0 +1,38 @@
+{
+  "files": ["README.md"],
+  "imageSize": 100,
+  "contributorsPerLine": 7,
+  "contributorsSortAlphabetically": false,
+  "badgeTemplate": "[![All Contributors](https://img.shields.io/badge/all_contributors-<%= contributors.length %>-orange.svg)](#contributors)",
+  "contributorTemplate": "<a href=\"<%= contributor.profile %>\"><img src=\"<%= contributor.avatar_url %>\" width=\"<%= options.imageSize %>px;\" alt=\"<%= contributor.name %>\"/><br /><sub><b><%= contributor.name %></b></sub></a>",
+  "types": {
+    "code": { "symbol": "💻", "description": "Code" },
+    "design": { "symbol": "🎨", "description": "Design" },
+    "doc": { "symbol": "📖", "description": "Documentation" },
+    "ideas": { "symbol": "🤔", "description": "Ideas, Planning, & Feedback" },
+    "review": { "symbol": "👀", "description": "Reviewed Pull Requests" }
+  },
+  "contributors": [
+    {
+      "login": "ahua2020qq",
+      "name": "山野小娃",
+      "avatar_url": "https://avatars.githubusercontent.com/u/ahua2020qq",
+      "profile": "https://github.com/ahua2020qq",
+      "contributions": ["code", "design", "doc", "ideas"]
+    },
+    {
+      "login": "deepseek-ai",
+      "name": "DeepSeek",
+      "avatar_url": "https://avatars.githubusercontent.com/u/148330874",
+      "profile": "https://github.com/deepseek-ai",
+      "contributions": ["design", "ideas"]
+    },
+    {
+      "login": "doubao",
+      "name": "豆包 (Doubao)",
+      "avatar_url": "https://www.doubao.com/favicon.ico",
+      "profile": "https://www.doubao.com",
+      "contributions": ["design", "ideas"]
+    }
+  ]
+}

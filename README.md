@@ -88,6 +88,7 @@ SGLang RadixCache 启发的前缀共享基数树 + FlashInfer 风格注意力适
 - `nxt_prefix_evict()` — LRU 叶节点淘汰，与页池联动释放内存
 - `nxt_prefix_lock/unlock()` — 请求级引用保护，防止活跃前缀被驱逐
 - `nxt_paged_attention_flash()` — FlashInfer 风格 batch decode（SM80+，需 `-DUSE_FLASHINFER=ON`）
+- **TensorRT-LLM 适配层** — Stub 模式编译（无需 TRT 依赖），渐进式集成量化/融合/Graph/Batching（`-DUSE_TENSORRT=ON`）
 
 ### v0.3 — GPT-2 Inference Engine + CUDA Optional
 
@@ -160,6 +161,10 @@ cmake --build build
 cmake -B build -S . -DUSE_CUDA=ON -DUSE_FLASHINFER=ON
 cmake --build build
 
+# With CUDA + TensorRT adapter (stub mode, no TRT dependency)
+cmake -B build -S . -DUSE_CUDA=ON -DUSE_TENSORRT=ON
+cmake --build build
+
 # Run tests
 cd build && ctest --output-on-failure
 
@@ -212,7 +217,8 @@ nxtLLM/
 ├── LICENSE
 ├── include/
 │   ├── operator_api.h          # GPU operator C API (v0.2)
-│   └── prefix_sharing.h       # Radix tree API (v0.4)
+│   ├── prefix_sharing.h       # Radix tree API (v0.4)
+│   └── tensorrt_adapter.h    # TensorRT-LLM stub adapter (v0.4)
 ├── operators/
 │   ├── page_attention.cu       # Paged attention kernel (v0.2)
 │   ├── activation_kernels.cu   # SiLU/GELU activation kernels (v0.2)
@@ -235,13 +241,16 @@ nxtLLM/
 │       ├── tokenizer.c          # (v0.3)
 │       ├── decode_loop.c        # (v0.3)
 │       └── weight_loader.c      # (v0.3)
+│   └── adapter/
+│       └── tensorrt_adapter.c  # TensorRT stub (v0.4)
 ├── examples/
 │   └── run_gpt2.c              # GPT-2 inference demo (v0.3)
 ├── tests/
 │   ├── test_page_pool.c
 │   ├── test_attention.c        # (v0.2)
 │   ├── test_prefix_sharing.c  # (v0.4)
-│   └── test_attention_bench.c # FlashInfer bench (v0.4)
+│   ├── test_attention_bench.c # FlashInfer bench (v0.4)
+│   └── test_tensorrt_integration.c # TensorRT stub tests (v0.4)
 ├── scripts/
 │   └── convert_gpt2_weights.py # (v0.3)
 └── docs/
@@ -251,7 +260,8 @@ nxtLLM/
     ├── api-reference.md
     └── design/
         ├── sglang_radixcache_analysis.md  # (v0.4)
-        └── flashinfer_analysis.md         # (v0.4)
+        ├── flashinfer_analysis.md         # (v0.4)
+        └── tensorrt_llm_analysis.md      # (v0.4)
 ```
 
 ## Roadmap
@@ -278,8 +288,9 @@ nxtLLM/
 - [x] Cross-request KV-cache reuse via `nxt_prefix_match/insert`
 - [x] LRU eviction with request-level lock protection
 - [x] FlashInfer-style batch decode adapter (`-DUSE_FLASHINFER=ON`)
+- [x] TensorRT-LLM stub adapter with 5-phase integration plan (`-DUSE_TENSORRT=ON`)
 - [x] Attention benchmark tool (v1 vs FlashInfer A/B comparison)
-- [x] 9 test cases covering insert, match, split, lock, eviction
+- [x] 10 TensorRT integration tests (stub mode, 10/10 pass)
 
 ### v0.5 (planned)
 - [ ] GPTQ / AWQ quantization kernels
@@ -293,13 +304,13 @@ nxtLLM/
 
 | Category | Files | Lines | Key Content |
 |----------|-------|-------|-------------|
-| C source (.c) | 12 | ~3200 | Core logic, inference, tests |
-| C headers (.h) | 8 | ~600 | Data structures, API declarations |
+| C source (.c) | 14 | ~3700 | Core logic, inference, adapters, tests |
+| C headers (.h) | 9 | ~800 | Data structures, API declarations |
 | CUDA (.cu) | 3 | ~1100 | GPU kernels (v1 + FlashInfer) |
 | Python (.py) | 2 | ~280 | KV-cache config, weight conversion |
-| Docs (.md) | 12 | ~1500 | Design docs, README, community files |
-| Other | 9 | ~1175 | CMake, .gitignore, templates |
-| **Total** | **46** | **~7855** | |
+| Docs (.md) | 13 | ~1800 | Design docs, README, community files |
+| Other | 10 | ~1300 | CMake, .gitignore, templates |
+| **Total** | **51** | **~8900** | |
 
 ### Technical Highlights
 
@@ -311,6 +322,8 @@ nxtLLM/
 
 **FlashInfer-Style Adapter** — `cp.async` multi-stage pipeline hides memory latency. Vectorized loads `vec_size = 16/sizeof(T)` maximize bandwidth. GQA-aware thread layout with templated `GROUP_SIZE`. Same signature as v1 kernel for A/B comparison.
 
+**TensorRT-LLM Adapter** — Stub-mode compilation without TensorRT dependency. 5-phase integration plan: stub → quantization → layer fusion → CUDA Graph → in-flight batching. 10 integration tests pass in stub mode.
+
 ### Test Coverage
 
 | Suite | Cases | Scope |
@@ -319,7 +332,8 @@ nxtLLM/
 | test_prefix_sharing | 10 | Tree lifecycle, insert, match, split, lock, evict, diverge, stats |
 | test_attention | 9 | Operator signatures, arg layout, smoke test |
 | test_attention_bench | 4+ | FlashInfer null launch, correctness, benchmark |
-| **Total** | **29+** | |
+| test_tensorrt_integration | 10 | TRT stub lifecycle, builder, engine, inference, quant, graph, batch |
+| **Total** | **39+** | |
 
 ### Known Limitations
 
@@ -353,6 +367,16 @@ nxtLLM is currently an **architecture research project** with unique memory mana
 3. `paged_kv_t` abstraction + multi-stage async pipeline (from FlashInfer)
 4. DecodePlan scheduler for large batch handling
 5. Real model weight loading + end-to-end inference validation
+
+## Contributors
+
+Thanks to the following contributors who made this project possible:
+
+| Contributor | Role |
+|-------------|------|
+| **山野小娃** ([@ahua2020qq](https://github.com/ahua2020qq)) | Project lead, architecture design, core implementation |
+| **DeepSeek** ([@deepseek-ai](https://github.com/deepseek-ai)) | Co-design, architectural guidance |
+| **豆包** ([Doubao](https://www.doubao.com)) | Co-design, inference optimization insights |
 
 ## Contributing
 
