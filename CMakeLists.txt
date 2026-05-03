@@ -71,3 +71,30 @@ target_link_libraries(test_attention
     CUDA::cudart
 )
 add_test(NAME attention_tests COMMAND test_attention)
+
+# ── Inference library ─────────────────────────────────────────────────
+set(INFERENCE_SOURCES
+    src/inference/transformer_block.c
+    src/inference/tokenizer.c
+    src/inference/decode_loop.c
+)
+
+add_library(nxtllm_inference STATIC ${INFERENCE_SOURCES})
+
+target_include_directories(nxtllm_inference PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+)
+
+target_link_libraries(nxtllm_inference PUBLIC
+    nxtllm_core
+    m
+)
+
+# ── Example: run_gpt2 ─────────────────────────────────────────────────
+add_executable(run_gpt2 examples/run_gpt2.c)
+
+target_link_libraries(run_gpt2
+    nxtllm_inference
+    m
+)
