@@ -11,9 +11,80 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdio.h>
 
 // ── Default page size (64 KB) ─────────────────────────────────────────
 #define DEFAULT_PAGE_SIZE   (64 * 1024)
+
+// ── Hash table: open addressing with linear probing ───────────────────
+// capacity is rounded up to the next power of 2 internally
+
+static inline size_t next_pow2(size_t v) {
+    v--;
+    v |= v >> 1; v |= v >> 2; v |= v >> 4;
+    v |= v >> 8; v |= v >> 16;
+#if SIZE_MAX > 0xFFFFFFFFu
+    v |= v >> 32;
+#endif
+    return v + 1;
+}
+
+void nxt_hash_init(NxtPageHash *hash, size_t capacity) {
+    memset(hash, 0, sizeof(*hash));
+    hash->capacity = next_pow2(capacity < 16 ? 16 : capacity);
+    hash->entries = calloc(hash->capacity, sizeof(NxtHashEntry));
+    if (hash->entries) {
+        for (size_t i = 0; i < hash->capacity; i++)
+            hash->entries[i].key = NXT_HASH_EMPTY;
+    }
+}
+
+void nxt_hash_destroy(NxtPageHash *hash) {
+    free(hash->entries);
+    memset(hash, 0, sizeof(*hash));
+}
+
+static inline size_t hash_probe(NxtPageHash *hash, uint32_t key, size_t i) {
+    return (key + i) & (hash->capacity - 1);  // capacity is power of 2
+}
+
+void nxt_hash_insert(NxtPageHash *hash, uint32_t key, NxtPage *value) {
+    if (!hash->entries || key == NXT_HASH_EMPTY) return;
+    for (size_t i = 0; i < hash->capacity; i++) {
+        size_t idx = hash_probe(hash, key, i);
+        if (hash->entries[idx].key == NXT_HASH_EMPTY || hash->entries[idx].key == key) {
+            hash->entries[idx].key   = key;
+            hash->entries[idx].value = value;
+            hash->size++;
+            return;
+        }
+    }
+}
+
+NxtPage *nxt_hash_lookup(NxtPageHash *hash, uint32_t key) {
+    if (!hash->entries || key == NXT_HASH_EMPTY) return NULL;
+    for (size_t i = 0; i < hash->capacity; i++) {
+        size_t idx = hash_probe(hash, key, i);
+        if (hash->entries[idx].key == NXT_HASH_EMPTY) return NULL;
+        if (hash->entries[idx].key == key) return hash->entries[idx].value;
+    }
+    return NULL;
+}
+
+bool nxt_hash_remove(NxtPageHash *hash, uint32_t key) {
+    if (!hash->entries || key == NXT_HASH_EMPTY) return false;
+    for (size_t i = 0; i < hash->capacity; i++) {
+        size_t idx = hash_probe(hash, key, i);
+        if (hash->entries[idx].key == NXT_HASH_EMPTY) return false;
+        if (hash->entries[idx].key == key) {
+            hash->entries[idx].key   = NXT_HASH_EMPTY;
+            hash->entries[idx].value = NULL;
+            hash->size--;
+            return true;
+        }
+    }
+    return false;
+}
 
 // ── Helper: get monotonic timestamp in microseconds ──────────────────
 static uint64_t get_timestamp_us(void) {
@@ -73,9 +144,13 @@ void nxt_pool_init(NxtGlobalBufferPool *pool,
     // Allocate page structures
     NxtPage *pages = calloc(total_pages, sizeof(NxtPage));
     if (!pages) return;
+    pool->pages_array = pages;
 
     // Initialize LRU-K tracker
     lruk_init(&pool->lru_k, total_pages);
+
+    // Initialize page_id → NxtPage* hash table
+    nxt_hash_init(&pool->page_hash, total_pages * 2);
 
     // Distribute pages across tiers evenly by type count
     size_t pages_per_type_per_tier = total_pages / (TIER_COUNT * PAGE_TYPE_COUNT);
@@ -96,35 +171,28 @@ void nxt_pool_init(NxtGlobalBufferPool *pool,
                 // Data buffer allocated lazily on first use
                 p->data    = NULL;
                 free_list_append(pool, tier, (NxtPageType)type, p);
+                nxt_hash_insert(&pool->page_hash, p->page_id, p);
             }
         }
     }
+    pool->pages_count = next_id;
 }
 
 // ── Pool destruction ─────────────────────────────────────────────────
 void nxt_pool_destroy(NxtGlobalBufferPool *pool) {
     lruk_destroy(&pool->lru_k);
+    nxt_hash_destroy(&pool->page_hash);
 
-    // Free all pages (walk free lists; pages struct array pointer recovered from first free page)
-    for (int tier = 0; tier < TIER_COUNT; tier++) {
-        for (int type = 0; type < PAGE_TYPE_COUNT; type++) {
-            NxtPage *page = pool->free_heads[tier][type];
-            while (page) {
-                free(page->data);
-                page->data = NULL;
-                page = page->free_next;
-            }
+    // Free data buffers from all pages (walk pages_array)
+    if (pool->pages_array) {
+        for (size_t i = 0; i < pool->pages_count; i++) {
+            free(pool->pages_array[i].data);
+            pool->pages_array[i].data = NULL;
         }
+        free(pool->pages_array);
+        pool->pages_array = NULL;
     }
 
-    // The backing array is recovered from the first non-NULL free head
-    for (int tier = 0; tier < TIER_COUNT; tier++)
-        for (int type = 0; type < PAGE_TYPE_COUNT; type++)
-            if (pool->free_heads[tier][type]) {
-                free(pool->free_heads[tier][type]);
-                goto cleared;
-            }
-cleared:
     memset(pool, 0, sizeof(*pool));
 }
 
@@ -232,23 +300,14 @@ bool nxt_evict_lru_k(NxtGlobalBufferPool *pool, NxtStorageTier tier, NxtPageType
     NxtPage *best_victim = NULL;
     uint64_t best_ts = UINT64_MAX;
 
-    // Walk free lists to find evictable pages? No — we need to walk USED pages.
-    // We iterate through the LRU-K cache to find a victim of the given tier+type
-    // with ref_count == 0 that has the oldest k-th timestamp.
+    // Iterate through the LRU-K cache and use hash table for O(1) page lookup
     for (size_t i = 0; i < pool->lru_k.capacity; i++) {
         LruKEntry *entry = &pool->lru_k.entries[i];
         uint64_t ts = lruk_kth_timestamp(entry);
         if (ts == LRU_TIMESTAMP_INVALID) continue;
 
-        // Page lookup requires access to the page array; since we only have free lists,
-        // we use a simplified approach: search free heads for the page_id.
-        // In a production system, we'd maintain a used-page hash table.
         uint32_t page_id = (uint32_t)i;
-        NxtPage *page = NULL;
-        for (int t = 0; t < TIER_COUNT && !page; t++)
-            for (int tp = 0; tp < PAGE_TYPE_COUNT && !page; tp++)
-                for (NxtPage *p = pool->free_heads[t][tp]; p; p = p->free_next)
-                    if (p->page_id == page_id) { page = p; break; }
+        NxtPage *page = nxt_hash_lookup(&pool->page_hash, page_id);
         if (!page) continue;
         if (page->type != type || page->tier != tier) continue;
         if (page->ref_count > 0) continue;
@@ -272,14 +331,118 @@ bool nxt_evict_lru_k(NxtGlobalBufferPool *pool, NxtStorageTier tier, NxtPageType
     return true;
 }
 
-// ── Background defragmentation (skeleton) ─────────────────────────────
+// ── Background defragmentation ────────────────────────────────────────
+// Within-tier compaction: moves used pages toward low page_ids, creating
+// a contiguous free region at the end of each tier×type group.
+//
+// Algorithm:
+//  1) Collect all pages of a given tier+type from pages_array
+//  2) Partition into "used" (ref_count > 0) and "free" pages
+//  3) Sort used pages by page_id (proxy for physical address)
+//  4) For the first N used pages at the lowest page_ids, leave them in place
+//  5) Remaining used pages swap data with free pages at lower page_ids
+//  6) This compacts used pages to the front, freeing contiguous space at the back
+
+// ── Helper: compare pages by page_id for sorting ──────────────────────
+static int page_cmp_by_id(const void *a, const void *b) {
+    const NxtPage *pa = *(const NxtPage **)a;
+    const NxtPage *pb = *(const NxtPage **)b;
+    if (pa->page_id < pb->page_id) return -1;
+    if (pa->page_id > pb->page_id) return 1;
+    return 0;
+}
+
 void nxt_defrag_background(NxtGlobalBufferPool *pool) {
-    // Defrag moves pages within a tier to create contiguous free regions.
-    // Current skeleton: log a defrag round and increment counter.
-    // Full implementation would:
-    //  1) Walk per-type used pages, sort by physical address
-    //  2) Move pages to close gaps (memmove)
-    //  3) Update free lists to reflect new contiguous free blocks
-    //  4) Optionally promote hot pages to faster tiers via LRU-K stats
+    if (!pool->pages_array) return;
+
+    size_t total_pages = pool->pages_count;
+    if (total_pages == 0) return;
+
+    // Per tier+type: collect all pages, separate used from free
+    for (int tier = 0; tier < TIER_COUNT; tier++) {
+        for (int type = 0; type < PAGE_TYPE_COUNT; type++) {
+
+            // Collect all pages belonging to this tier+type
+            NxtPage *group_pages[4096];
+            size_t group_count = 0;
+
+            for (size_t i = 0; i < total_pages && group_count < 4096; i++) {
+                NxtPage *p = &pool->pages_array[i];
+                if ((int)p->tier == tier && (int)p->type == type) {
+                    group_pages[group_count++] = p;
+                }
+            }
+            if (group_count < 2) continue;
+
+            // Sort by page_id (ascending physical address)
+            qsort(group_pages, group_count, sizeof(NxtPage *), page_cmp_by_id);
+
+            // Partition: used pages at front, free pages at back
+            // Two-pointer approach within the sorted array:
+            // left  = first free slot (should be occupied by a used page)
+            // right = last used page (should be moved to fill the free slot)
+            size_t left = 0;
+            size_t right = group_count;
+
+            while (left < right) {
+                // Advance left to first free page
+                while (left < right && group_pages[left]->ref_count > 0)
+                    left++;
+                // Find rightmost used page
+                do {
+                    right--;
+                } while (right > left && group_pages[right]->ref_count == 0);
+
+                if (left >= right) break;
+
+                // Swap data buffers between free page (left) and used page (right)
+                NxtPage *free_pg = group_pages[left];
+                NxtPage *used_pg = group_pages[right];
+
+                // Swap data pointers
+                void *tmp_data = free_pg->data;
+                free_pg->data = used_pg->data;
+                used_pg->data = tmp_data;
+
+                // Swap ref_counts
+                int32_t tmp_ref = free_pg->ref_count;
+                free_pg->ref_count = used_pg->ref_count;
+                used_pg->ref_count = tmp_ref;
+
+                // Update hash table: the page_id→page mapping stays the same
+                // because we're swapping data within existing page structs
+                // The free list needs to be rebuilt below
+            }
+
+            // Rebuild the free list for this tier+type after compaction
+            pool->free_heads[tier][type] = NULL;
+            pool->free_tails[tier][type] = NULL;
+            pool->free_counts[tier][type] = 0;
+
+            for (size_t i = 0; i < group_count; i++) {
+                NxtPage *p = group_pages[i];
+                p->free_next = NULL;
+                p->free_prev = NULL;
+
+                if (p->ref_count == 0) {
+                    // Append to free list
+                    if (pool->free_tails[tier][type]) {
+                        pool->free_tails[tier][type]->free_next = p;
+                        p->free_prev = pool->free_tails[tier][type];
+                    } else {
+                        pool->free_heads[tier][type] = p;
+                    }
+                    pool->free_tails[tier][type] = p;
+                    pool->free_counts[tier][type]++;
+                }
+            }
+        }
+    }
+
     pool->total_defrag_rounds++;
+
+    fprintf(stderr, "[nxtLLM] defrag round %lu complete: "
+            "tier_used=[%zu, %zu, %zu] bytes\n",
+            (unsigned long)pool->total_defrag_rounds,
+            pool->tier_used[0], pool->tier_used[1], pool->tier_used[2]);
 }

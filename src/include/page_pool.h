@@ -57,6 +57,20 @@ typedef struct {
     size_t    estimated_memory;               // estimated total memory needed
 } NxtReqPageDir;
 
+// ── Hash table entry (open addressing, linear probing) ─────────────────
+#define NXT_HASH_EMPTY 0xFFFFFFFFu
+
+typedef struct {
+    uint32_t key;    // page_id
+    NxtPage *value;  // pointer to page (NULL = tombstone / free)
+} NxtHashEntry;
+
+typedef struct {
+    NxtHashEntry *entries;
+    size_t        capacity;    // must be power of 2
+    size_t        size;        // active entries
+} NxtPageHash;
+
 // ── Global buffer pool ────────────────────────────────────────────────
 typedef struct {
     // Per-tier, per-type free page lists (doubly-linked)
@@ -67,6 +81,13 @@ typedef struct {
     // LRU-K tracker (shared across all pages)
     LruKCache lru_k;
 
+    // page_id → NxtPage* hash table for fast lookup
+    NxtPageHash page_hash;
+
+    // Backing array of all page structs (for cleanup)
+    NxtPage  *pages_array;
+    size_t    pages_count;       // actual number of initialized pages
+
     // Memory budget per tier (bytes)
     size_t    tier_capacity[TIER_COUNT];
     size_t    tier_used[TIER_COUNT];
@@ -76,6 +97,13 @@ typedef struct {
     uint64_t  total_evictions;
     uint64_t  total_defrag_rounds;
 } NxtGlobalBufferPool;
+
+// ── Hash table operations ─────────────────────────────────────────────
+void nxt_hash_init(NxtPageHash *hash, size_t capacity);
+void nxt_hash_destroy(NxtPageHash *hash);
+void nxt_hash_insert(NxtPageHash *hash, uint32_t key, NxtPage *value);
+NxtPage *nxt_hash_lookup(NxtPageHash *hash, uint32_t key);
+bool nxt_hash_remove(NxtPageHash *hash, uint32_t key);
 
 // ── Buffer pool lifecycle ─────────────────────────────────────────────
 void nxt_pool_init(NxtGlobalBufferPool *pool,
