@@ -32,6 +32,12 @@ static int test_paged_attention_signature(void) {
     return 0;
 }
 
+static int test_paged_attention_v2_signature(void) {
+    void* fn = (void*)nxt_paged_attention_v2;
+    assert(fn != NULL);
+    return 0;
+}
+
 static int test_silu_and_mul_signature(void) {
     void* fn = (void*)nxt_silu_and_mul;
     assert(fn != NULL);
@@ -90,6 +96,22 @@ static int test_paged_attention_arg_layout(void) {
         0, 0, 0,   /* max_num_blocks_per_seq, block_size, dtype_size */
         0, 0,      /* kv_block_stride, kv_head_stride */
         NULL);     /* stream */
+
+    return 0;
+}
+
+static int test_paged_attention_v2_arg_layout(void) {
+    int block_table = 0;
+    int seq_len = 0;
+
+    nxt_paged_attention_v2(
+        NULL, NULL, NULL, NULL,
+        &block_table, &seq_len,
+        0, 0, 0,
+        0, 0.0f,
+        0, 0, 0,
+        0, 0,
+        NULL);
 
     return 0;
 }
@@ -263,6 +285,130 @@ static int test_paged_attention_head_sizes(void) {
     return failures;
 }
 
+static int test_paged_attention_v2_cuda_launch(void) {
+    /*
+     * Smoke-test the V2 launcher with a real GPU kernel launch.
+     * Tests GQA-aware layout with num_heads=4, num_kv_heads=1.
+     */
+    const int num_seqs = 2;
+    const int num_heads = 4;
+    const int num_kv_heads = 1;
+    const int head_size = 64;
+    const int max_blocks = 1;
+    const int block_size = 16;
+    const int dtype_size = 2;
+
+    const int q_stride = num_heads * head_size;
+    const int kv_block_stride = num_kv_heads * block_size * head_size;
+    const int kv_head_stride = block_size * head_size;
+
+    size_t out_bytes = num_seqs * num_heads * head_size * dtype_size;
+    size_t q_bytes = out_bytes;
+    size_t kv_bytes = max_blocks * kv_block_stride * dtype_size;
+
+    __half *d_out, *d_query, *d_key, *d_val;
+    int *d_bt, *d_sl;
+    cudaError_t err;
+
+    if (cudaMalloc(&d_out, out_bytes) != cudaSuccess) return 1;
+    if (cudaMalloc(&d_query, q_bytes) != cudaSuccess) { cudaFree(d_out); return 1; }
+    if (cudaMalloc(&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); return 1; }
+    if (cudaMalloc(&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1; }
+    if (cudaMalloc(&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
+        cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1;
+    }
+    if (cudaMalloc(&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
+        cudaFree(d_bt); cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1;
+    }
+
+    cudaMemset(d_out, 0, out_bytes);
+    cudaMemset(d_query, 0, q_bytes);
+    cudaMemset(d_key, 0, kv_bytes);
+    cudaMemset(d_val, 0, kv_bytes);
+
+    int h_bt[2] = {0, 0};
+    int h_sl[2] = {block_size, block_size};
+    cudaMemcpy(d_bt, h_bt, sizeof(h_bt), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sl, h_sl, sizeof(h_sl), cudaMemcpyHostToDevice);
+
+    nxt_paged_attention_v2(d_out, d_query, d_key, d_val, d_bt, d_sl,
+                           num_seqs, num_heads, head_size, num_kv_heads,
+                           1.0f / sqrtf((float)head_size),
+                           max_blocks, block_size, dtype_size,
+                           kv_block_stride, kv_head_stride, NULL);
+
+    err = cudaDeviceSynchronize();
+    int ret = (err == cudaSuccess) ? 0 : 1;
+
+    cudaFree(d_sl); cudaFree(d_bt);
+    cudaFree(d_val); cudaFree(d_key);
+    cudaFree(d_query); cudaFree(d_out);
+    return ret;
+}
+
+static int test_paged_attention_v2_head_sizes(void) {
+    /*
+     * Verify V2 dispatches for all supported head sizes.
+     */
+    const int supported_sizes[] = {32, 64, 80, 96, 112, 128, 192, 256};
+    const int num_sizes = sizeof(supported_sizes) / sizeof(supported_sizes[0]);
+    int failures = 0;
+
+    for (int i = 0; i < num_sizes; i++) {
+        int hs = supported_sizes[i];
+        const int num_seqs = 1;
+        const int num_heads = 2;
+        const int num_kv_heads = 2;
+        const int max_blocks = 1;
+        const int bs = 16;
+        const int ds = 2;
+
+        const int q_stride = num_heads * hs;
+        const int kv_block_stride = num_kv_heads * bs * hs;
+        const int kv_head_stride = bs * hs;
+
+        size_t out_bytes = num_seqs * num_heads * hs * ds;
+        size_t kv_bytes = max_blocks * kv_block_stride * ds;
+
+        __half *d_out, *d_query, *d_key, *d_val;
+        int *d_bt, *d_sl;
+        cudaError_t err;
+
+        if (cudaMalloc(&d_out, out_bytes) != cudaSuccess) { failures++; continue; }
+        if (cudaMalloc(&d_query, out_bytes) != cudaSuccess) { cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc(&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc(&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc(&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
+            cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue;
+        }
+        if (cudaMalloc(&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
+            cudaFree(d_bt); cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue;
+        }
+
+        cudaMemset(d_out, 0, out_bytes);
+        cudaMemset(d_query, 0, out_bytes);
+        cudaMemset(d_key, 0, kv_bytes);
+        cudaMemset(d_val, 0, kv_bytes);
+        int h_bt = 0, h_sl = bs;
+        cudaMemcpy(d_bt, &h_bt, sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_sl, &h_sl, sizeof(int), cudaMemcpyHostToDevice);
+
+        nxt_paged_attention_v2(d_out, d_query, d_key, d_val, d_bt, d_sl,
+                               num_seqs, num_heads, hs, num_kv_heads,
+                               1.0f / sqrtf((float)hs),
+                               max_blocks, bs, ds,
+                               kv_block_stride, kv_head_stride, NULL);
+
+        err = cudaDeviceSynchronize();
+        if (err != cudaSuccess) failures++;
+
+        cudaFree(d_sl); cudaFree(d_bt);
+        cudaFree(d_val); cudaFree(d_key);
+        cudaFree(d_query); cudaFree(d_out);
+    }
+    return failures;
+}
+
 #endif  /* CUDART_VERSION */
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -284,6 +430,7 @@ int main(void) {
     } while (0)
 
     RUN_TEST(paged_attention_signature);
+    RUN_TEST(paged_attention_v2_signature);
     RUN_TEST(silu_and_mul_signature);
     RUN_TEST(mul_and_silu_signature);
     RUN_TEST(gelu_and_mul_signature);
@@ -291,10 +438,13 @@ int main(void) {
     RUN_TEST(gelu_elementwise_signature);
     RUN_TEST(silu_elementwise_signature);
     RUN_TEST(paged_attention_arg_layout);
+    RUN_TEST(paged_attention_v2_arg_layout);
 
 #ifdef CUDART_VERSION
     RUN_TEST(paged_attention_cuda_launch);
     RUN_TEST(paged_attention_head_sizes);
+    RUN_TEST(paged_attention_v2_cuda_launch);
+    RUN_TEST(paged_attention_v2_head_sizes);
 #endif
 
     #undef RUN_TEST

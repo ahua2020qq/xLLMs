@@ -44,6 +44,7 @@ target_include_directories(nxtllm_core PUBLIC
 if(USE_CUDA)
     add_library(nxtllm_operators STATIC
         operators/page_attention.cu
+        operators/page_attention_v2.cu
         operators/activation_kernels.cu
     )
 
