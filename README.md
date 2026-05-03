@@ -157,6 +157,9 @@ cmake --build build
 # Run tests
 cd build && ctest --output-on-failure
 
+# Run GPT-2 inference demo (random weights)
+./run_gpt2
+
 # Run GPT-2 demo (random weights)
 ./run_gpt2
 ```
