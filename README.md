@@ -293,10 +293,28 @@ nxtLLM/
 - [x] 10 TensorRT integration tests (stub mode, 10/10 pass)
 
 ### v0.5 (planned)
-- [ ] GPTQ / AWQ quantization kernels
-- [ ] paged_kv_t abstraction + multi-stage async pipeline
-- [ ] CUDA graph capture for decode phase
-- [ ] DecodePlan scheduler for partition-KV
+
+**Epic 1: 页面池哈希索引** — 消除 O(n) 驱逐扫描
+- [ ] 实现 page_id → NxtPage* 哈希表（uthash 或自实现开放寻址）
+- [ ] 在 `nxt_pool_init` 中初始化，`nxt_page_alloc` / `nxt_page_free` 中维护
+- [ ] 重写 `nxt_evict_lru_k` 使用哈希快速查找，驱逐从 O(n) 降至 O(k)
+- [ ] 更新 `page_pool.h` 添加哈希表结构字段
+- [ ] 新增测试：哈希查找正确性、大规模页池驱逐性能
+
+**Epic 2: 后台碎片整理** — 完善 `nxt_defrag_background`
+- [ ] 扫描已分配页面，按 tier 分组、按物理地址排序
+- [ ] 同 tier 内紧凑：移动页面消除间隙（memmove），更新空闲链表
+- [ ] 可选：利用 LRU-K 统计将热页面提升至快速 tier
+- [ ] 新增碎片率指标：fragmentation_ratio = free_fragments / total_free_pages
+- [ ] 新增测试：碎片整理前后页面对比、跨 tier 验证
+
+**Epic 3: Paged Attention V2 流水线** — FlashInfer 技术落地
+- [ ] 创建 `operators/page_attention_v2.cu`，实现 cp.async 多级流水线
+- [ ] 向量化加载 vec_size = 16/sizeof(T)，最大化全局内存带宽
+- [ ] GQA 感知线程布局，GROUP_SIZE 模板化（1/2/4/8）
+- [ ] 保留 `nxt_paged_attention` v1 接口，新增 `nxt_paged_attention_v2`
+- [ ] SM80+ only，运行时架构检测自动回退 v1
+- [ ] 基准测试：v1 vs v2 在不同 batch/context 配置下的吞吐对比
 
 ## Project Analysis
 
@@ -362,11 +380,9 @@ nxtLLM is currently an **architecture research project** with unique memory mana
 
 ### v0.5 Priorities
 
-1. page_id → NxtPage hash table (resolve O(n) bottleneck)
-2. Defragmentation implementation
-3. `paged_kv_t` abstraction + multi-stage async pipeline (from FlashInfer)
-4. DecodePlan scheduler for large batch handling
-5. Real model weight loading + end-to-end inference validation
+1. **Epic 1**: page_id → NxtPage hash table — resolve O(n) eviction bottleneck
+2. **Epic 2**: Background defragmentation — same-tier compaction, LRU-K hot-page promotion
+3. **Epic 3**: paged_attention_v2 — cp.async pipeline, vectorized loads, GQA-aware threads (SM80+)
 
 ## Contributors
 
