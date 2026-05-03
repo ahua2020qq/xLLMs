@@ -70,22 +70,24 @@ prefix-sharing radix tree for KV-cache reuse, and admission control for concurre
 
 ## What's New
 
-### v0.4 — Prefix Sharing Radix Tree
+### v0.4 — Prefix Sharing Radix Tree + FlashInfer Adapter
 
-SGLang RadixCache 启发的前缀共享基数树，实现跨请求 KV-cache 复用：
+SGLang RadixCache 启发的前缀共享基数树 + FlashInfer 风格注意力适配器：
 
 | 功能 | 文件 | 说明 |
 |------|------|------|
 | **Radix Tree API** | `include/prefix_sharing.h` | 前缀匹配、插入、淘汰、锁定接口 |
 | **Radix Tree 实现** | `src/core/prefix_sharing.c` | 基数树节点分裂/合并、LRU 淘汰、与三级页池集成 |
-| **测试** | `tests/test_prefix_sharing.c` | 9 个测试用例覆盖完整功能 |
-| **设计分析** | `docs/design/sglang_radixcache_analysis.md` | SGLang RadixCache 源码分析与 nxtLLM 适配方案 |
+| **FlashInfer Adapter** | `operators/flashinfer_adapter.cu` | Batch decode 内核，cp.async 流水线、GQA-aware 线程布局 |
+| **Bench Test** | `tests/test_attention_bench.c` | v1 vs FlashInfer-style A/B 性能对比 |
+| **设计分析** | `docs/design/` | SGLang RadixCache + FlashInfer 架构分析 |
 
 核心能力：
 - `nxt_prefix_match()` — O(L) 最长前缀匹配，返回缓存的 page_id 列表
 - `nxt_prefix_insert()` — O(L) 插入，自动节点分裂实现前缀共享
 - `nxt_prefix_evict()` — LRU 叶节点淘汰，与页池联动释放内存
 - `nxt_prefix_lock/unlock()` — 请求级引用保护，防止活跃前缀被驱逐
+- `nxt_paged_attention_flash()` — FlashInfer 风格 batch decode（SM80+，需 `-DUSE_FLASHINFER=ON`）
 
 ### v0.3 — GPT-2 Inference Engine + CUDA Optional
 
@@ -154,13 +156,14 @@ cmake --build build
 cmake -B build -S . -DUSE_CUDA=ON
 cmake --build build
 
+# With CUDA + FlashInfer adapter (SM80+)
+cmake -B build -S . -DUSE_CUDA=ON -DUSE_FLASHINFER=ON
+cmake --build build
+
 # Run tests
 cd build && ctest --output-on-failure
 
 # Run GPT-2 inference demo (random weights)
-./run_gpt2
-
-# Run GPT-2 demo (random weights)
 ./run_gpt2
 ```
 
@@ -213,6 +216,7 @@ nxtLLM/
 ├── operators/
 │   ├── page_attention.cu       # Paged attention kernel (v0.2)
 │   ├── activation_kernels.cu   # SiLU/GELU activation kernels (v0.2)
+│   ├── flashinfer_adapter.cu   # FlashInfer-style adapter (v0.4)
 │   └── cache.py                # KV-cache configuration (v0.2)
 ├── src/
 │   ├── include/
@@ -236,7 +240,8 @@ nxtLLM/
 ├── tests/
 │   ├── test_page_pool.c
 │   ├── test_attention.c        # (v0.2)
-│   └── test_prefix_sharing.c  # (v0.4)
+│   ├── test_prefix_sharing.c  # (v0.4)
+│   └── test_attention_bench.c # FlashInfer bench (v0.4)
 ├── scripts/
 │   └── convert_gpt2_weights.py # (v0.3)
 └── docs/
@@ -245,7 +250,8 @@ nxtLLM/
     ├── lru-k-eviction.md
     ├── api-reference.md
     └── design/
-        └── sglang_radixcache_analysis.md  # (v0.4)
+        ├── sglang_radixcache_analysis.md  # (v0.4)
+        └── flashinfer_analysis.md         # (v0.4)
 ```
 
 ## Roadmap
@@ -271,13 +277,15 @@ nxtLLM/
 - [x] Prefix-sharing radix tree (SGLang RadixCache inspired)
 - [x] Cross-request KV-cache reuse via `nxt_prefix_match/insert`
 - [x] LRU eviction with request-level lock protection
+- [x] FlashInfer-style batch decode adapter (`-DUSE_FLASHINFER=ON`)
+- [x] Attention benchmark tool (v1 vs FlashInfer A/B comparison)
 - [x] 9 test cases covering insert, match, split, lock, eviction
 
 ### v0.5 (planned)
 - [ ] GPTQ / AWQ quantization kernels
-- [ ] FlashInfer attention integration
+- [ ] paged_kv_t abstraction + multi-stage async pipeline
 - [ ] CUDA graph capture for decode phase
-- [ ] Benchmarking harness
+- [ ] DecodePlan scheduler for partition-KV
 
 ## Contributing
 
