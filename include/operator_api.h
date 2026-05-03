@@ -71,6 +71,29 @@ void nxt_paged_attention(
     int kv_block_stride, int kv_head_stride,
     nxt_stream_t stream);
 
+#ifdef USE_FLASHINFER
+/**
+ * FlashInfer-style batch decode paged attention (optional module).
+ *
+ * Launches a GQA-aware batch-decode kernel with one block per (request, KV-head).
+ * Internally dispatches by dtype_size (2 → fp16, 4 → fp32), head_size
+ * (64, 80, 96, 112, 128, 192, 256), and GQA group_size (1, 2, 4, 8).
+ *
+ * Same signature as nxt_paged_attention for drop-in A/B comparison.
+ * Requires SM80+, USE_FLASHINFER=ON, USE_CUDA=ON.
+ */
+void nxt_paged_attention_flash(
+    void* out, const void* query,
+    const void* key_cache, const void* value_cache,
+    const int* block_tables, const int* seq_lens,
+    int num_seqs, int num_heads, int head_size,
+    int num_kv_heads, float scale,
+    int max_num_blocks_per_seq,
+    int block_size, int dtype_size,
+    int kv_block_stride, int kv_head_stride,
+    nxt_stream_t stream);
+#endif  /* USE_FLASHINFER */
+
 /* ═══════════════════════════════════════════════════════════════════════
  * Activation + Gating Kernels
  * ═══════════════════════════════════════════════════════════════════════ */

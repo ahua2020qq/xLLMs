@@ -1,4 +1,5 @@
 option(USE_CUDA "Enable CUDA support" OFF)
+option(USE_FLASHINFER "Enable FlashInfer-style attention adapter (requires USE_CUDA)" OFF)
 
 if(USE_CUDA)
     cmake_minimum_required(VERSION 3.16)
@@ -114,6 +115,52 @@ target_link_libraries(nxtllm_inference PUBLIC
     nxtllm_core
     m
 )
+
+# ── FlashInfer-style adapter (optional) ────────────────────────────────
+if(USE_FLASHINFER)
+    if(NOT USE_CUDA)
+        message(FATAL_ERROR "USE_FLASHINFER requires USE_CUDA=ON")
+    endif()
+
+    add_library(nxtllm_flash_adapter STATIC
+        operators/flashinfer_adapter.cu
+    )
+
+    target_include_directories(nxtllm_flash_adapter PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    )
+
+    target_link_libraries(nxtllm_flash_adapter PUBLIC
+        CUDA::cudart
+        nxtllm_operators
+    )
+
+    set_target_properties(nxtllm_flash_adapter PROPERTIES
+        CUDA_ARCHITECTURES "80;86;89;90"
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+
+    target_compile_definitions(nxtllm_flash_adapter PRIVATE
+        USE_FLASHINFER=1
+    )
+
+    add_executable(test_attention_bench
+        tests/test_attention_bench.c
+    )
+    target_include_directories(test_attention_bench PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS}
+    )
+    target_compile_definitions(test_attention_bench PRIVATE
+        CUDART_VERSION=${NXTLLM_CUDART_VERSION}
+    )
+    target_link_libraries(test_attention_bench
+        nxtllm_flash_adapter
+        nxtllm_operators
+        CUDA::cudart
+    )
+    add_test(NAME attention_bench_tests COMMAND test_attention_bench)
+endif()
 
 # ── Example: run_gpt2 ─────────────────────────────────────────────────
 add_executable(run_gpt2 examples/run_gpt2.c)
