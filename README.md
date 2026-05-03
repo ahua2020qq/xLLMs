@@ -1,4 +1,4 @@
-# nxtLLM V0.1 — Next-Generation LLM Inference Engine
+# nxtLLM V0.2 — Next-Generation LLM Inference Engine
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Conduct-Contributor%20Covenant%202.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
@@ -22,6 +22,7 @@ and admission control for concurrent inference requests.
 - **Request-aware scheduling**: Per-request page directories with admission control
 - **Background defragmentation**: Coalesces free pages to reduce fragmentation
 - **Modular architecture**: Clean separation of page pool, LRU-K, and memory manager layers
+- **GPU-accelerated operators**: Paged attention, activation kernels (SiLU/GELU), and KV-cache management
 
 ## Architecture (5-Layer Design)
 
@@ -61,6 +62,31 @@ and admission control for concurrent inference requests.
 +═══════════════════════════════════════════════════════════════+
 ```
 
+## What's New in v0.2
+
+### GPU Operators (`operators/`)
+
+nxtLLM v0.2 introduces a dedicated operator library with CUDA-accelerated kernels:
+
+| Operator | File | Description |
+|---|---|---|
+| **Paged Attention** | `operators/page_attention.cu` | Multi-head attention over paged KV-cache blocks. Supports GQA/MQA with configurable block sizes and head dimensions. Adapted from the vLLM paged_attention_v1 kernel. |
+| **SiLU & Mul** | `operators/activation_kernels.cu` | Fused SiLU-gate + element-wise multiply (silu_and_mul / mul_and_silu). |
+| **GELU & Mul** | `operators/activation_kernels.cu` | Fused GELU-gate + multiply with "none" and "tanh" approximations. |
+| **Element-wise Activations** | `operators/activation_kernels.cu` | Standalone SiLU and GELU element-wise kernels. |
+| **KV-Cache Config** | `operators/cache.py` | Python configuration dataclass for block size, memory utilization, cache dtype, and prefix caching. |
+
+All GPU kernels are exposed through a unified C API defined in `include/operator_api.h`.
+
+### Key Changes
+
+- **New** `nxtllm_operators` static library with CUDA compilation
+- **New** `include/operator_api.h` — unified C API for all GPU operators
+- **New** `operators/cache.py` — KV-cache configuration module
+- **New** `tests/test_attention.c` — operator API signature and smoke tests
+- CMakeLists.txt updated: C++17/CUDA17, CUDA Toolkit required, SM 75/80/86/89/90 targets
+- `gptq_kernels.cu` deferred to v0.3 (quantization pipeline requires additional dependencies)
+
 ## Core Data Structures
 
 ### NxtPage
@@ -87,7 +113,9 @@ evicting pages with only a single recent access burst.
 ### Prerequisites
 
 - CMake >= 3.16
-- C11-compliant compiler (GCC >= 9, Clang >= 10)
+- C11/C++17-compliant compiler (GCC >= 9, Clang >= 10)
+- CUDA Toolkit >= 11.8
+- NVIDIA driver >= 525 (SM 75+)
 
 ### Build & Run
 
@@ -106,6 +134,7 @@ cd build && ctest --output-on-failure
 
 ```c
 #include "page_pool.h"
+#include "operator_api.h"
 
 int main() {
     NxtGlobalBufferPool pool;
@@ -131,6 +160,12 @@ int main() {
 nxtLLM/
 ├── CMakeLists.txt
 ├── README.md
+├── include/
+│   └── operator_api.h          # GPU operator C API (v0.2)
+├── operators/
+│   ├── page_attention.cu       # Paged attention kernel (v0.2)
+│   ├── activation_kernels.cu   # SiLU/GELU activation kernels (v0.2)
+│   └── cache.py                # KV-cache configuration (v0.2)
 ├── src/
 │   ├── include/
 │   │   ├── page_pool.h
@@ -138,13 +173,34 @@ nxtLLM/
 │   └── core/
 │       └── memory_manager.c
 ├── tests/
-│   └── test_page_pool.c
+│   ├── test_page_pool.c
+│   └── test_attention.c        # Operator API tests (v0.2)
 └── docs/
 ```
 
+## Roadmap
+
+### v0.1 (current)
+- [x] Three-tier buffer pool (GPU/CPU/SSD)
+- [x] LRU-K (K=3) page eviction
+- [x] Page allocation and reference counting
+- [x] Basic test suite
+
+### v0.2
+- [x] Paged attention CUDA kernel
+- [x] Activation kernels (SiLU, GELU)
+- [x] KV-cache configuration module
+- [x] Unified operator C API
+
+### v0.3 (planned)
+- [ ] GPTQ / AWQ quantization kernels
+- [ ] FlashAttention integration
+- [ ] CUDA graph capture for decode phase
+- [ ] Benchmarking harness
+
 ## Contributing
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for code style (C11),
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for code style (C11, C++17, CUDA17),
 build instructions, testing guidelines, and the PR checklist.
 
 All contributors must follow our [Code of Conduct](CODE_OF_CONDUCT.md).
