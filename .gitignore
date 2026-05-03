@@ -1,3 +1,28 @@
+# Build
 build/
+out/
+
+# Backups
 *.bak
+*.orig
+
+# IDE / Editor
 .claude/
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Compiled objects (should be in build/)
+*.o
+*.so
+*.a
+*.exe

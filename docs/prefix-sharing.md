@@ -163,4 +163,5 @@ nxt_prefix_unlock: 从 node 向上遍历到 root，lock_ref--
 | 无线程安全保护 | 调度器层面串行化或细粒度锁 |
 | page_id 到 NxtPage 反查缺失 | 维护 page-id → NxtPage 哈希表 |
 | 无 SHA256 链式哈希 | 可选：跨请求去重和完整性校验 |
-| 淘汰直接释放页面 | GPU → CPU/SSD 分级迁移 |
+| 淘汰直接操作 `tier_used[0]` 而非走页池释放 | 通过 page_id 哈希表调用 `nxt_page_ref_dec()` |
+| DFS/BFS 使用固定栈/队列（1024） | 超大树的深度可能溢出 |

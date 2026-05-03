@@ -5,7 +5,7 @@
   This header must not be removed. All derivative works must retain this notice.
 -->
 
-# nxtLLM V0.1 API 参考文档
+# nxtLLM V0.4 API 参考文档
 
 ## 1. 缓冲池生命周期
 
@@ -197,3 +197,71 @@ int      lruk_compare(const LruKEntry *a, const LruKEntry *b);
 | `LRU_TIMESTAMP_INVALID` | 0 | 无效时间戳标记 |
 | `NXT_MAX_PAGES_PER_REQUEST` | 256 | 每请求最大页面数 |
 | `DEFAULT_PAGE_SIZE` | 65536 | 默认页面大小 64 KB |
+
+## 9. 前缀共享基数树 (V0.4)
+
+### nxt_prefix_tree_init / nxt_prefix_tree_destroy
+
+```c
+void nxt_prefix_tree_init(NxtPrefixTree *tree, NxtGlobalBufferPool *pool);
+void nxt_prefix_tree_destroy(NxtPrefixTree *tree);
+```
+
+初始化/销毁前缀树。可选绑定页池（淘汰时自动释放页面）。
+
+### nxt_prefix_match
+
+```c
+NxtMatchResult nxt_prefix_match(NxtPrefixTree *tree,
+                                const int32_t *token_ids, int32_t len);
+```
+
+查找最长缓存前缀，返回匹配的 page_id 列表和终止节点。O(L) 复杂度。
+
+**返回值** `NxtMatchResult`：
+- `page_ids[]` — 匹配到的 KV-cache 页面 ID（最多 2048 个）
+- `page_count` — 匹配页面数
+- `last_node` — 匹配终止节点（用于后续 lock/unlock）
+- `matched_tokens` — 匹配的 token 数
+
+### nxt_prefix_insert
+
+```c
+int32_t nxt_prefix_insert(NxtPrefixTree *tree,
+                           const int32_t *token_ids, int32_t len,
+                           const uint32_t *page_ids, int32_t page_count,
+                           int32_t priority);
+```
+
+插入 token 序列 → page_ids 映射。自动节点分裂实现前缀共享。
+
+**返回值**：已缓存的共享前缀长度，-1 表示分配失败。
+
+### nxt_prefix_evict
+
+```c
+int32_t nxt_prefix_evict(NxtPrefixTree *tree, int32_t num_tokens);
+```
+
+淘汰约 `num_tokens` 个 token 的缓存页面。LRU 策略，优先淘汰最久未访问的叶子。若绑定了页池，自动释放对应页面。
+
+**返回值**：实际淘汰的 token 数。
+
+### nxt_prefix_lock / nxt_prefix_unlock
+
+```c
+void nxt_prefix_lock(NxtPrefixTree *tree, NxtPrefixNode *node);
+void nxt_prefix_unlock(NxtPrefixTree *tree, NxtPrefixNode *node);
+```
+
+锁定/解锁节点及其祖先，防止被驱逐。请求开始使用缓存前缀时 lock，释放时 unlock。
+
+### nxt_prefix_total_tokens / nxt_prefix_node_count / nxt_prefix_evictable_size
+
+```c
+int32_t nxt_prefix_total_tokens(const NxtPrefixTree *tree);
+int32_t nxt_prefix_node_count(const NxtPrefixTree *tree);
+int32_t nxt_prefix_evictable_size(const NxtPrefixTree *tree);
+```
+
+统计查询：总缓存 token 数、节点数、可淘汰 token 数。
