@@ -1,4 +1,10 @@
 /*
+ * nxtLLM — Next-Generation LLM Inference Engine
+ * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * This header must not be removed. All derivative works must retain this notice.
+ *
  * nxtLLM Weight Loader — GPT-2 Model Weights
  *
  * Loads GPT-2 weights from a flat binary format produced by

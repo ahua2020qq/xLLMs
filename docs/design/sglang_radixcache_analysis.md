@@ -1,3 +1,10 @@
+<!--
+  nxtLLM — Next-Generation LLM Inference Engine
+  Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
+  SPDX-License-Identifier: Apache-2.0
+  This header must not be removed. All derivative works must retain this notice.
+-->
+
 # SGLang RadixCache 设计与 nxtLLM 集成分析
 
 > 来源：`sglang/python/sglang/srt/mem_cache/radix_cache.py`

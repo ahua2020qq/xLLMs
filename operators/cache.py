@@ -1,3 +1,9 @@
+# nxtLLM — Next-Generation LLM Inference Engine
+# Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
+# SPDX-License-Identifier: Apache-2.0
+#
+# This header must not be removed. All derivative works must retain this notice.
+
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the nxtLLM project
 # Adapted from vLLM vllm/config/cache.py

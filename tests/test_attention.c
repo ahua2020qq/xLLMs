@@ -1,4 +1,10 @@
 /*
+ * nxtLLM — Next-Generation LLM Inference Engine
+ * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * This header must not be removed. All derivative works must retain this notice.
+ *
  * test_attention.c — Validate nxtLLM paged attention operator API
  *
  * This is a lightweight C-level smoke test.  Real numerical validation
