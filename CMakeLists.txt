@@ -30,10 +30,12 @@ endif()
 add_library(nxtllm_core STATIC
     src/core/memory_manager.c
     src/core/lru_k.c
+    src/core/prefix_sharing.c
 )
 
 target_include_directories(nxtllm_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 # ── Operator library (CUDA) ──────────────────────────────────────────
@@ -67,6 +69,12 @@ add_executable(test_page_pool
 )
 target_link_libraries(test_page_pool nxtllm_core)
 add_test(NAME page_pool_tests COMMAND test_page_pool)
+
+add_executable(test_prefix_sharing
+    tests/test_prefix_sharing.c
+)
+target_link_libraries(test_prefix_sharing nxtllm_core)
+add_test(NAME prefix_sharing_tests COMMAND test_prefix_sharing)
 
 if(USE_CUDA)
     math(EXPR NXTLLM_CUDART_VERSION
