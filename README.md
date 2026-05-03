@@ -287,6 +287,73 @@ nxtLLM/
 - [ ] CUDA graph capture for decode phase
 - [ ] DecodePlan scheduler for partition-KV
 
+## Project Analysis
+
+### Code Statistics
+
+| Category | Files | Lines | Key Content |
+|----------|-------|-------|-------------|
+| C source (.c) | 12 | ~3200 | Core logic, inference, tests |
+| C headers (.h) | 8 | ~600 | Data structures, API declarations |
+| CUDA (.cu) | 3 | ~1100 | GPU kernels (v1 + FlashInfer) |
+| Python (.py) | 2 | ~280 | KV-cache config, weight conversion |
+| Docs (.md) | 12 | ~1500 | Design docs, README, community files |
+| Other | 9 | ~1175 | CMake, .gitignore, templates |
+| **Total** | **46** | **~7855** | |
+
+### Technical Highlights
+
+**Three-Tier Storage** — 9 doubly-linked free lists `[3 tiers × 3 types]` with O(1) allocation. Atomic reference counting via `__sync_fetch_and_add/sub`. Lazy data buffer allocation on first use.
+
+**LRU-K (K=3) Eviction** — Ring buffer tracks 3 most recent access timestamps per page. k-th timestamp used as eviction criterion. Immature entries (<K accesses) are easier to evict.
+
+**Prefix-Sharing Radix Tree** — Patricia Trie indexes token sequences with automatic node splitting. `lock_ref` chain protects active requests' KV-cache. Integrated with page pool for LRU eviction.
+
+**FlashInfer-Style Adapter** — `cp.async` multi-stage pipeline hides memory latency. Vectorized loads `vec_size = 16/sizeof(T)` maximize bandwidth. GQA-aware thread layout with templated `GROUP_SIZE`. Same signature as v1 kernel for A/B comparison.
+
+### Test Coverage
+
+| Suite | Cases | Scope |
+|-------|-------|-------|
+| test_page_pool | 6 | Pool init, alloc/free, refcount, admission, LRU-K |
+| test_prefix_sharing | 10 | Tree lifecycle, insert, match, split, lock, evict, diverge, stats |
+| test_attention | 9 | Operator signatures, arg layout, smoke test |
+| test_attention_bench | 4+ | FlashInfer null launch, correctness, benchmark |
+| **Total** | **29+** | |
+
+### Known Limitations
+
+| Issue | Severity | Impact |
+|-------|----------|--------|
+| Defragmentation skeleton only | Low | Fragmentation over long runs |
+| Victim selection O(n) scan | Medium | Bottleneck at >10K pages |
+| No page_id → NxtPage hash | Medium | Slow eviction and prefix reclaim |
+| Free lists not thread-safe | Medium | External lock needed for concurrency |
+| weight_loader hardcoded n_layer=12 | Medium | Memory leak for non-12-layer models |
+| No integration / numerical accuracy tests | Medium | End-to-end correctness unverified |
+
+### Competitive Positioning
+
+| Dimension | nxtLLM | vLLM | SGLang | Llama.cpp |
+|-----------|--------|------|--------|-----------|
+| Three-tier storage | ✅ GPU/CPU/SSD | GPU/CPU | GPU/CPU | CPU/Disk |
+| Prefix sharing | ✅ Radix tree | ❌ | ✅ RadixCache | ❌ |
+| LRU-K eviction | ✅ K=3 | LRU | Pluggable | LRU |
+| GPU operators | ✅ Optional | ✅ Full | ✅ Full | ❌ CPU only |
+| Inference engine | 🔶 GPT-2 demo | ✅ Multi-model | ✅ Multi-model | ✅ Multi-model |
+| Quantization | ❌ | ✅ GPTQ/AWQ | ✅ | ✅ GGUF |
+| Production ready | ❌ | ✅ | ✅ | ✅ |
+
+nxtLLM is currently an **architecture research project** with unique memory management design (three-tier storage + LRU-K + prefix sharing). It requires a full scheduler, multi-model support, quantization, and performance optimization before production deployment.
+
+### v0.5 Priorities
+
+1. page_id → NxtPage hash table (resolve O(n) bottleneck)
+2. Defragmentation implementation
+3. `paged_kv_t` abstraction + multi-stage async pipeline (from FlashInfer)
+4. DecodePlan scheduler for large batch handling
+5. Real model weight loading + end-to-end inference validation
+
 ## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for code style (C11, C++17, CUDA17),
