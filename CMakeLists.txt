@@ -1,5 +1,6 @@
 option(USE_CUDA "Enable CUDA support" OFF)
 option(USE_FLASHINFER "Enable FlashInfer-style attention adapter (requires USE_CUDA)" OFF)
+option(USE_TENSORRT "Enable TensorRT-LLM integration (requires USE_CUDA)" OFF)
 
 if(USE_CUDA)
     cmake_minimum_required(VERSION 3.16)
@@ -160,6 +161,76 @@ if(USE_FLASHINFER)
         CUDA::cudart
     )
     add_test(NAME attention_bench_tests COMMAND test_attention_bench)
+endif()
+
+# ── TensorRT-LLM adapter (optional) ────────────────────────────────────
+if(USE_TENSORRT)
+    if(NOT USE_CUDA)
+        message(FATAL_ERROR "USE_TENSORRT requires USE_CUDA=ON")
+    endif()
+
+    find_package(TensorRT REQUIRED)
+
+    # TensorRT adapter library (stub implementation when no TRT found)
+    add_library(nxtllm_tensorrt_adapter STATIC
+        src/adapter/tensorrt_adapter.c
+    )
+
+    target_include_directories(nxtllm_tensorrt_adapter PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+        ${TensorRT_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(nxtllm_tensorrt_adapter PUBLIC
+        nxtllm_inference
+        nxtllm_operators
+        nxtllm_core
+        CUDA::cudart
+        ${TensorRT_LIBRARIES}
+    )
+
+    target_compile_definitions(nxtllm_tensorrt_adapter PUBLIC
+        NXTLLM_HAS_TENSORRT=1
+    )
+
+    # TensorRT integration test
+    add_executable(test_tensorrt_integration
+        tests/test_tensorrt_integration.c
+    )
+
+    target_include_directories(test_tensorrt_integration PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    )
+
+    target_compile_definitions(test_tensorrt_integration PRIVATE
+        NXTLLM_HAS_TENSORRT=1
+    )
+
+    target_link_libraries(test_tensorrt_integration
+        nxtllm_tensorrt_adapter
+    )
+
+    add_test(NAME tensorrt_integration_tests COMMAND test_tensorrt_integration)
+else()
+    # Stub mode: compile adapter stub directly with test (no TensorRT needed)
+    add_executable(test_tensorrt_integration
+        tests/test_tensorrt_integration.c
+        src/adapter/tensorrt_adapter.c
+    )
+
+    target_include_directories(test_tensorrt_integration PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/include
+    )
+
+    target_link_libraries(test_tensorrt_integration
+        nxtllm_core
+        m
+    )
+
+    add_test(NAME tensorrt_integration_tests COMMAND test_tensorrt_integration)
 endif()
 
 # ── Example: run_gpt2 ─────────────────────────────────────────────────
