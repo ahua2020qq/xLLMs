@@ -1,8 +1,14 @@
-# nxtLLM — Next-Generation LLM Inference Engine
+# nxtLLM V0.1 — Next-Generation LLM Inference Engine
 
 nxtLLM is a high-performance LLM inference engine with a multi-tier memory management system.
 It implements LRU-K page eviction, tier-aware page allocation (GPU HBM → CPU DRAM → NVMe SSD),
 and admission control for concurrent inference requests.
+
+> **本项目由 [山野小娃](https://github.com/ahua2020qq)、[DeepSeek](https://github.com/deepseek-ai) 和 [豆包](https://www.doubao.com) 共同设计。**
+>
+> 感谢 [vLLM](https://github.com/vllm-project/vllm) 和 [Llama.cpp](https://github.com/ggerganov/llama.cpp) 为开源 LLM 推理社区做出的卓越贡献，nxtLLM 未来将参考这些成熟项目中已验证的设计理念。
+>
+> 衷心希望大模型推理能够更快进入 v1.0+ 时代 —— v0.20.X 的漫长过渡，着实让人有些尴尬。
 
 ## Project Goals
 
