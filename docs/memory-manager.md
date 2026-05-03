@@ -5,7 +5,7 @@
   This header must not be removed. All derivative works must retain this notice.
 -->
 
-# nxtLLM V0.1 页面池与内存管理设计文档
+# nxtLLM V0.5 页面池与内存管理设计文档
 
 ## 1. 概述
 
@@ -73,6 +73,7 @@ typedef struct {
     NxtPage  *free_heads[3][3];   // [tier][type] 空闲链表头
     NxtPage  *free_tails[3][3];   // [tier][type] 空闲链表尾
     uint32_t  free_counts[3][3];  // [tier][type] 空闲页面数
+    NxtPageHash page_hash;        // V0.5: page_id → NxtPage* 哈希表
     LruKCache lru_k;              // LRU-K 追踪器
     size_t    tier_capacity[3];   // 各层容量（字节）
     size_t    tier_used[3];       // 各层已用量（字节）
@@ -142,14 +143,52 @@ nxt_page_ref_dec:  __sync_fetch_and_sub(&ref_count, 1)
   4. 若无法驱逐出足够空间 → 拒绝
 ```
 
-### 3.6 碎片整理（nxt_defrag_background）— V0.1 骨架
+### 3.6 碎片整理（nxt_defrag_background）— V0.5 已实现
 
-V0.1 仅递增 `total_defrag_rounds` 计数器。完整实现计划：
+按 tier×type 分组紧凑整理，消除页面间隙：
 
-1. 遍历各类型已用页面，按物理地址排序
-2. 移动页面消除间隙（memmove）
-3. 更新空闲链表以反映新的连续空闲块
-4. 可选：利用 LRU-K 统计将热页面提升至快速层级
+1. 按 tier×type 收集页面（最多 4096 页/组）
+2. 按 page_id 排序（qsort，O(n log n)）
+3. 双指针交换：`left` 找首个空闲页，`right` 找末尾已用页，交换 data 指针和 ref_count
+4. 重建空闲链表：重置 free_heads/free_tails，追加所有 ref_count==0 的页面
+5. 更新 free_counts
+
+**设计要点**：
+- 指针交换（O(1)/次）代替 memmove（O(page_size)/次），高效无数据拷贝
+- 按 tier 隔离，不会跨层移动数据
+- 需在推理间隙执行（batch 之间），暂停 alloc/free
+
+### 3.7 哈希索引（V0.5 新增）
+
+在 `NxtGlobalBufferPool` 中嵌入 `NxtPageHash`，实现 page_id → NxtPage* 的 O(1) 查找：
+
+```c
+typedef struct {
+    uint32_t key;    // page_id
+    NxtPage *value;  // 页面指针
+} NxtHashEntry;
+
+typedef struct {
+    NxtHashEntry *entries;
+    size_t        capacity;  // 2 的幂次
+    size_t        size;
+} NxtPageHash;
+```
+
+**API**：
+- `nxt_hash_init()` — 初始化，容量为 next_pow2(total_pages × 2)
+- `nxt_hash_insert()` — 插入，线性探测冲突解决
+- `nxt_hash_lookup()` — O(1) 查找
+- `nxt_hash_remove()` — 哨兵值标记删除（NXT_HASH_EMPTY = 0xFFFFFFFF）
+
+**集成点**：
+- `nxt_pool_init()` — 初始化哈希表，插入所有页面
+- `nxt_evict_lru_k()` — 用 `nxt_hash_lookup()` 替代链表遍历
+- `nxt_defrag_background()` — 整理后更新哈希表
+
+**性能提升**：
+- 驱逐操作从 O(n²) 降至 O(k)（k = 候选页面数）
+- 内存开销约 24 bytes/page
 
 ## 4. 线程安全模型
 
@@ -165,10 +204,9 @@ V0.1 仅递增 `total_defrag_rounds` 计数器。完整实现计划：
 
 | 限制 | 影响 | 修复方向 |
 |------|------|---------|
-| Victim 选择 O(n) 全表扫描 | 大规模页面池（>10K pages）性能瓶颈 | 维护 page_id → NxtPage 哈希表 + 最小堆 |
-| 碎片整理仅骨架 | 长时间运行后内存碎片化 | 实现页面对齐合并和热页提升 |
+| ~~Victim 选择 O(n) 全表扫描~~ | ~~V0.5 已通过哈希索引解决~~ | — |
+| ~~碎片整理仅骨架~~ | ~~V0.5 已实现完整碎片整理~~ | — |
 | 空闲链表非线程安全 | 并发分配需外部锁 | 细粒度 per-tier 锁或无锁链表 |
-| 页面查找无反向索引 | 驱逐时需遍历空闲链表定位 page | 全局 page_id → NxtPage* 映射 |
 
 ## 5. 内存布局
 

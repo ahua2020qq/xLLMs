@@ -1,4 +1,4 @@
-# nxtLLM V0.4 — Next-Generation LLM Inference Engine
+# nxtLLM V0.5 — Next-Generation LLM Inference Engine
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Code of Conduct](https://img.shields.io/badge/Conduct-Contributor%20Covenant%202.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
@@ -6,29 +6,30 @@
 [![Security](https://img.shields.io/badge/security-report%20vulnerability-orange.svg)](SECURITY.md)
 
 nxtLLM is a high-performance LLM inference engine with a multi-tier memory management system.
-It implements LRU-K page eviction, tier-aware page allocation (GPU HBM → CPU DRAM → NVMe SSD),
-prefix-sharing radix tree for KV-cache reuse, and admission control for concurrent inference requests.
+It implements LRU-K page eviction with O(1) hash-indexed lookup, tier-aware page allocation
+(GPU HBM → CPU DRAM → NVMe SSD), background defragmentation, prefix-sharing radix tree for
+KV-cache reuse, and cp.async pipelined paged attention V2 kernels for high-throughput decode.
 
-> **本项目由 [山野小娃](https://github.com/ahua2020qq)、[DeepSeek](https://github.com/deepseek-ai) 和 [豆包](https://www.doubao.com) 共同设计。**
+> **本项目由 [山野小娃](https://github.com/ahua2020qq)、[DeepSeek](https://github.com/deepseek-ai)、[豆包](https://www.doubao.com) 和 [GLM](https://bigmodel.cn) 共同设计。**
 >
 > 感谢以下开源项目及其社区为 LLM 推理领域做出的卓越贡献：
 >
 > - **[vLLM](https://github.com/vllm-project/vllm)** — PagedAttention 与连续批处理启发
 > - **[Llama.cpp](https://github.com/ggerganov/llama.cpp)** — 轻量化 CPU 推理与 GGUF 量化
 > - **[SGLang](https://github.com/sgl-project/sglang)** — RadixCache 前缀共享设计（已集成）
-> - **[FlashInfer](https://github.com/flashinfer-ai/flashinfer)** — 通用注意力内核（未来参考）
+> - **[FlashInfer](https://github.com/flashinfer-ai/flashinfer)** — cp.async 流水线注意力内核（V2 已集成）
 >
 > nxtLLM 的成长离不开这些优秀项目的智慧。衷心希望大模型推理能够更快进入 v1.0+ 时代 —— v0.20.X 的漫长过渡，着实让人有些尴尬。
 
 ## Project Goals
 
 - **Efficient memory utilization**: Three-tier buffer pool spanning GPU, CPU, and SSD storage
-- **Intelligent page eviction**: LRU-K (K=3) algorithm prevents thrashing of recently accessed pages
+- **Intelligent page eviction**: LRU-K (K=3) with O(1) hash-indexed page lookup prevents thrashing
 - **Prefix-aware KV-cache sharing**: Radix tree indexes token sequences for cross-request cache reuse
 - **Request-aware scheduling**: Per-request page directories with admission control
-- **Background defragmentation**: Coalesces free pages to reduce fragmentation
+- **Background defragmentation**: Per-tier compaction with pointer-swapping defragmentation
 - **Modular architecture**: Clean separation of page pool, LRU-K, prefix tree, and memory manager layers
-- **GPU-accelerated operators**: Paged attention, activation kernels (SiLU/GELU), and KV-cache management
+- **GPU-accelerated operators**: Paged attention V1/V2, activation kernels (SiLU/GELU), and KV-cache management
 
 ## Architecture (5-Layer Design)
 
@@ -69,6 +70,24 @@ prefix-sharing radix tree for KV-cache reuse, and admission control for concurre
 ```
 
 ## What's New
+
+### v0.5 — Hash-Indexed Eviction + Defragmentation + Paged Attention V2
+
+三项核心性能优化，将 nxtLLM 从架构验证推进到性能可用的推理引擎：
+
+| 功能 | 文件 | 说明 |
+|------|------|------|
+| **Page Hash Index** | `src/include/page_pool.h`, `src/core/memory_manager.c` | O(1) page_id → NxtPage* 开放寻址哈希表，驱逐从 O(n²) 降至 O(k) |
+| **Background Defrag** | `src/core/memory_manager.c` | Per-tier 紧凑整理，指针交换代替 memmove，自动重建空闲链表 |
+| **Attention V2 Kernel** | `operators/page_attention_v2.cu` | cp.async 3-stage pipeline，向量化加载，GQA-aware 线程布局 (SM80+) |
+| **V2 API** | `include/operator_api.h` | `nxt_paged_attention_v2()` — 与 V1 相同签名，支持 A/B 对比 |
+| **扩展测试** | `tests/test_page_pool.c`, `tests/test_attention.c` | 哈希 CRUD、驱逐集成、碎片整理、V2 launch、8 种 head_size |
+
+核心能力：
+- `nxt_hash_lookup()` — O(1) 开放寻址哈希查找，线性探测，容量 2 的幂次
+- `nxt_defrag_background()` — 按 tier×type 分组，qsort 排序，双指针交换，重建空闲链表
+- `nxt_paged_attention_v2()` — 3-stage cp.async 流水线，支持 GQA GROUP_SIZE (1/2/4/8/16)，8 种 HEAD_SIZE
+- SM 架构运行时检测：SM80+ 自动启用 V2，SM75 回退 V1
 
 ### v0.4 — Prefix Sharing Radix Tree + FlashInfer Adapter
 
@@ -221,6 +240,7 @@ nxtLLM/
 │   └── tensorrt_adapter.h    # TensorRT-LLM stub adapter (v0.4)
 ├── operators/
 │   ├── page_attention.cu       # Paged attention kernel (v0.2)
+│   ├── page_attention_v2.cu    # Pipelined attention V2 (v0.5)
 │   ├── activation_kernels.cu   # SiLU/GELU activation kernels (v0.2)
 │   ├── flashinfer_adapter.cu   # FlashInfer-style adapter (v0.4)
 │   └── cache.py                # KV-cache configuration (v0.2)
@@ -283,7 +303,7 @@ nxtLLM/
 - [x] CUDA optional build (`-DUSE_CUDA=ON`)
 - [x] run_gpt2 example with random weights
 
-### v0.4 ✅ (current)
+### v0.4 ✅
 - [x] Prefix-sharing radix tree (SGLang RadixCache inspired)
 - [x] Cross-request KV-cache reuse via `nxt_prefix_match/insert`
 - [x] LRU eviction with request-level lock protection
@@ -292,29 +312,18 @@ nxtLLM/
 - [x] Attention benchmark tool (v1 vs FlashInfer A/B comparison)
 - [x] 10 TensorRT integration tests (stub mode, 10/10 pass)
 
-### v0.5 (planned)
+### v0.5 ✅ (current)
+- [x] Page hash index — O(1) open-addressing hash table for page_id → NxtPage* lookup
+- [x] Eviction optimization — `nxt_evict_lru_k` uses hash lookup, O(n²) → O(k)
+- [x] Background defragmentation — per-tier compaction with pointer-swapping
+- [x] Paged Attention V2 — cp.async 3-stage pipeline, vectorized loads, GQA-aware (SM80+)
+- [x] Extended test coverage — hash CRUD, defrag, V2 launch, 8 head sizes
 
-**Epic 1: 页面池哈希索引** — 消除 O(n) 驱逐扫描
-- [ ] 实现 page_id → NxtPage* 哈希表（uthash 或自实现开放寻址）
-- [ ] 在 `nxt_pool_init` 中初始化，`nxt_page_alloc` / `nxt_page_free` 中维护
-- [ ] 重写 `nxt_evict_lru_k` 使用哈希快速查找，驱逐从 O(n) 降至 O(k)
-- [ ] 更新 `page_pool.h` 添加哈希表结构字段
-- [ ] 新增测试：哈希查找正确性、大规模页池驱逐性能
-
-**Epic 2: 后台碎片整理** — 完善 `nxt_defrag_background`
-- [ ] 扫描已分配页面，按 tier 分组、按物理地址排序
-- [ ] 同 tier 内紧凑：移动页面消除间隙（memmove），更新空闲链表
-- [ ] 可选：利用 LRU-K 统计将热页面提升至快速 tier
-- [ ] 新增碎片率指标：fragmentation_ratio = free_fragments / total_free_pages
-- [ ] 新增测试：碎片整理前后页面对比、跨 tier 验证
-
-**Epic 3: Paged Attention V2 流水线** — FlashInfer 技术落地
-- [ ] 创建 `operators/page_attention_v2.cu`，实现 cp.async 多级流水线
-- [ ] 向量化加载 vec_size = 16/sizeof(T)，最大化全局内存带宽
-- [ ] GQA 感知线程布局，GROUP_SIZE 模板化（1/2/4/8）
-- [ ] 保留 `nxt_paged_attention` v1 接口，新增 `nxt_paged_attention_v2`
-- [ ] SM80+ only，运行时架构检测自动回退 v1
-- [ ] 基准测试：v1 vs v2 在不同 batch/context 配置下的吞吐对比
+### v0.6 (planned)
+- [ ] Request scheduler with priority queue
+- [ ] KV-cache manager with automatic tier migration
+- [ ] Multi-model support (Llama, Mistral, Qwen)
+- [ ] Quantization (GPTQ/AWQ/GGUF)
 
 ## Project Analysis
 
@@ -322,13 +331,13 @@ nxtLLM/
 
 | Category | Files | Lines | Key Content |
 |----------|-------|-------|-------------|
-| C source (.c) | 14 | ~3700 | Core logic, inference, adapters, tests |
-| C headers (.h) | 9 | ~800 | Data structures, API declarations |
-| CUDA (.cu) | 3 | ~1100 | GPU kernels (v1 + FlashInfer) |
+| C source (.c) | 14 | ~4600 | Core logic, inference, adapters, tests |
+| C headers (.h) | 9 | ~830 | Data structures, API declarations |
+| CUDA (.cu) | 4 | ~1450 | GPU kernels (v1 + v2 + FlashInfer) |
 | Python (.py) | 2 | ~280 | KV-cache config, weight conversion |
 | Docs (.md) | 13 | ~1800 | Design docs, README, community files |
 | Other | 10 | ~1300 | CMake, .gitignore, templates |
-| **Total** | **51** | **~8900** | |
+| **Total** | **52** | **~10200** | |
 
 ### Technical Highlights
 
@@ -336,7 +345,13 @@ nxtLLM/
 
 **LRU-K (K=3) Eviction** — Ring buffer tracks 3 most recent access timestamps per page. k-th timestamp used as eviction criterion. Immature entries (<K accesses) are easier to evict.
 
+**O(1) Page Hash Index** — Open-addressing hash table with linear probing maps `page_id → NxtPage*`. Power-of-2 capacity with bit-mask modulo. Eliminates O(n) linked-list scan in eviction path; drives eviction from O(n²) down to O(k).
+
+**Background Defragmentation** — Per-tier compaction: gathers pages by tier×type, sorts by page_id, swaps pointers between free and used slots (O(1) per swap). Rebuilds doubly-linked free lists from compacted layout.
+
 **Prefix-Sharing Radix Tree** — Patricia Trie indexes token sequences with automatic node splitting. `lock_ref` chain protects active requests' KV-cache. Integrated with page pool for LRU eviction.
+
+**Paged Attention V2** — 3-stage `cp.async` pipeline hides global memory latency. Vectorized loads `vec_size = 16/sizeof(T)` maximize bandwidth. GQA-aware thread layout with templated `GROUP_SIZE` (1/2/4/8/16). Supports 8 head sizes (32–256). SM80+ with runtime fallback to V1.
 
 **FlashInfer-Style Adapter** — `cp.async` multi-stage pipeline hides memory latency. Vectorized loads `vec_size = 16/sizeof(T)` maximize bandwidth. GQA-aware thread layout with templated `GROUP_SIZE`. Same signature as v1 kernel for A/B comparison.
 
@@ -346,23 +361,22 @@ nxtLLM/
 
 | Suite | Cases | Scope |
 |-------|-------|-------|
-| test_page_pool | 6 | Pool init, alloc/free, refcount, admission, LRU-K |
+| test_page_pool | 11 | Pool init, alloc/free, refcount, admission, LRU-K, hash CRUD, hash+eviction, defrag |
 | test_prefix_sharing | 10 | Tree lifecycle, insert, match, split, lock, evict, diverge, stats |
-| test_attention | 9 | Operator signatures, arg layout, smoke test |
+| test_attention | 13 | V1/V2 signatures, arg layout, CUDA launch, GQA, 8 head sizes |
 | test_attention_bench | 4+ | FlashInfer null launch, correctness, benchmark |
 | test_tensorrt_integration | 10 | TRT stub lifecycle, builder, engine, inference, quant, graph, batch |
-| **Total** | **39+** | |
+| **Total** | **48+** | |
 
 ### Known Limitations
 
 | Issue | Severity | Impact |
 |-------|----------|--------|
-| Defragmentation skeleton only | Low | Fragmentation over long runs |
-| Victim selection O(n) scan | Medium | Bottleneck at >10K pages |
-| No page_id → NxtPage hash | Medium | Slow eviction and prefix reclaim |
 | Free lists not thread-safe | Medium | External lock needed for concurrency |
 | weight_loader hardcoded n_layer=12 | Medium | Memory leak for non-12-layer models |
 | No integration / numerical accuracy tests | Medium | End-to-end correctness unverified |
+| No request scheduler | High | Manual scheduling only |
+| No multi-model support | High | GPT-2 demo only |
 
 ### Competitive Positioning
 
@@ -378,11 +392,12 @@ nxtLLM/
 
 nxtLLM is currently an **architecture research project** with unique memory management design (three-tier storage + LRU-K + prefix sharing). It requires a full scheduler, multi-model support, quantization, and performance optimization before production deployment.
 
-### v0.5 Priorities
+### v0.6 Priorities
 
-1. **Epic 1**: page_id → NxtPage hash table — resolve O(n) eviction bottleneck
-2. **Epic 2**: Background defragmentation — same-tier compaction, LRU-K hot-page promotion
-3. **Epic 3**: paged_attention_v2 — cp.async pipeline, vectorized loads, GQA-aware threads (SM80+)
+1. **Request scheduler**: Priority queue with admission control and preemption
+2. **KV-cache manager**: Automatic tier migration based on LRU-K statistics
+3. **Multi-model support**: Llama, Mistral, Qwen weight loading and inference
+4. **Quantization**: GPTQ/AWQ 4-bit and GGUF integration
 
 ## Contributors
 
