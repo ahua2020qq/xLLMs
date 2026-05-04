@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <pthread.h>
 #include "lru_k.h"
 
 // ── Page type enumeration (three levels) ──────────────────────────────
@@ -92,6 +93,14 @@ typedef struct {
     size_t    tier_capacity[TIER_COUNT];
     size_t    tier_used[TIER_COUNT];
 
+    // Defrag scoring and background thread
+    float     defrag_score;           // current fragmentation score [0.0, 1.0]
+    float     defrag_threshold;       // trigger defrag when score exceeds this
+    uint64_t  last_defrag_time;       // last defrag epoch seconds (time(NULL))
+    uint64_t  defrag_interval_sec;    // interval between defrag scans
+    bool      defrag_thread_running;  // background thread active flag
+    pthread_t defrag_thread;          // background defrag thread handle
+
     // Global stats
     uint64_t  total_allocations;
     uint64_t  total_evictions;
@@ -125,7 +134,15 @@ bool nxt_admission_check(NxtGlobalBufferPool *pool, const NxtReqPageDir *req);
 // ── LRU-K eviction ────────────────────────────────────────────────────
 bool nxt_evict_lru_k(NxtGlobalBufferPool *pool, NxtStorageTier tier, NxtPageType type);
 
-// ── Background defragmentation (skeleton) ─────────────────────────────
+// ── Background defragmentation ─────────────────────────────────────────
 void nxt_defrag_background(NxtGlobalBufferPool *pool);
+
+// ── Defrag scoring ────────────────────────────────────────────────────
+float nxt_calc_defrag_score(NxtGlobalBufferPool *pool);
+
+// ── Background defrag thread ──────────────────────────────────────────
+void *nxt_defrag_thread_func(void *arg);
+void  nxt_start_defrag_thread(NxtGlobalBufferPool *pool);
+void  nxt_stop_defrag_thread(NxtGlobalBufferPool *pool);
 
 #endif // PAGE_POOL_H

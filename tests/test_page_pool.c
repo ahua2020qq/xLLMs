@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <unistd.h>
 #include "page_pool.h"
 
 static int tests_run = 0;
@@ -314,6 +315,7 @@ static void test_defrag_basic(void) {
     }
 
     // Run defrag
+    pool.defrag_threshold = 0.0f; // force defrag for testing
     nxt_defrag_background(&pool);
     ASSERT(pool.total_defrag_rounds == 1, "defrag rounds should be 1 after call");
 
@@ -362,6 +364,7 @@ static void test_defrag_free_counts(void) {
     nxt_page_ref_dec(&pool, p[6]);
 
     uint32_t before_defrag = pool.free_counts[TIER_GPU][PAGE_TYPE_DATA];
+    pool.defrag_threshold = 0.0f; // force defrag for testing
     nxt_defrag_background(&pool);
     uint32_t after_defrag = pool.free_counts[TIER_GPU][PAGE_TYPE_DATA];
 
@@ -373,6 +376,94 @@ static void test_defrag_free_counts(void) {
     nxt_page_ref_dec(&pool, p[3]);
     nxt_page_ref_dec(&pool, p[5]);
     nxt_page_ref_dec(&pool, p[7]);
+
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: Defrag Scoring ──────────────────────────────────────────────
+static void test_defrag_scoring(void) {
+    TEST("defrag_scoring");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  64 * 1024,
+                  400);
+
+    // Fresh pool: all pages are free and contiguous by page_id
+    float score0 = nxt_calc_defrag_score(&pool);
+    ASSERT(score0 >= 0.0f && score0 <= 1.0f, "score out of [0,1] range");
+    // With all pages free and contiguous, score should be near zero
+    ASSERT(score0 < 0.05f, "fresh pool fragmentation should be near zero");
+
+    // Allocate pages to create fragmentation pattern
+    NxtPage *pages[20];
+    for (int i = 0; i < 12; i++) {
+        pages[i] = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+        ASSERT_PTR(pages[i], "alloc failed during scoring setup");
+    }
+
+    // Free every other page to create interleaved free/used pattern
+    for (int i = 0; i < 12; i += 2) {
+        nxt_page_ref_dec(&pool, pages[i]);
+    }
+
+    float score1 = nxt_calc_defrag_score(&pool);
+    ASSERT(score1 >= 0.0f && score1 <= 1.0f, "score after frag out of [0,1] range");
+    // Interleaved pattern should produce higher fragmentation
+    ASSERT(score1 > score0, "fragmented pool score should be higher than fresh");
+
+    // Run defrag and verify score decreases
+    pool.defrag_threshold = 0.0f; // force defrag for testing
+    nxt_defrag_background(&pool);
+    float score2 = nxt_calc_defrag_score(&pool);
+    ASSERT(score2 < score1, "defrag should reduce fragmentation score");
+
+    // Clean up remaining pages
+    for (int i = 1; i < 12; i += 2) {
+        nxt_page_ref_dec(&pool, pages[i]);
+    }
+
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: Background Defrag Thread ─────────────────────────────────────
+static void test_defrag_background_thread(void) {
+    TEST("defrag_background_thread");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  64 * 1024,
+                  400);
+
+    // Short interval for testing
+    pool.defrag_interval_sec = 1;
+    pool.defrag_threshold    = 0.0f; // always trigger defrag
+
+    uint64_t rounds_before = pool.total_defrag_rounds;
+
+    // Start background thread
+    nxt_start_defrag_thread(&pool);
+    ASSERT(pool.defrag_thread_running, "thread should be running after start");
+
+    // Let it run at least one cycle
+    sleep(2);
+
+    // Stop thread gracefully
+    nxt_stop_defrag_thread(&pool);
+    ASSERT(!pool.defrag_thread_running, "thread should not be running after stop");
+
+    // Defrag should have run at least once
+    ASSERT(pool.total_defrag_rounds > rounds_before,
+           "background thread should have executed defrag at least once");
+
+    // Thread start/stop should be idempotent
+    nxt_stop_defrag_thread(&pool); // should not crash
 
     nxt_pool_destroy(&pool);
     PASS();
@@ -393,6 +484,8 @@ int main(void) {
     test_eviction_with_hash();
     test_defrag_basic();
     test_defrag_free_counts();
+    test_defrag_scoring();
+    test_defrag_background_thread();
 
     printf("\n=== Results: %d run, %d passed, %d failed ===\n",
            tests_run, tests_passed, tests_failed);

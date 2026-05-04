@@ -12,6 +12,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdio.h>
+#include <unistd.h>
 
 // ── Default page size (64 KB) ─────────────────────────────────────────
 #define DEFAULT_PAGE_SIZE   (64 * 1024)
@@ -127,6 +128,10 @@ void nxt_pool_init(NxtGlobalBufferPool *pool,
                    size_t gpu_bytes, size_t cpu_bytes, size_t ssd_bytes,
                    size_t page_size, size_t max_pages) {
     memset(pool, 0, sizeof(*pool));
+
+    pool->defrag_threshold    = 0.30f;
+    pool->defrag_score        = 0.0f;
+    pool->defrag_interval_sec = 60;
 
     pool->tier_capacity[TIER_GPU] = gpu_bytes;
     pool->tier_capacity[TIER_CPU] = cpu_bytes;
@@ -331,6 +336,69 @@ bool nxt_evict_lru_k(NxtGlobalBufferPool *pool, NxtStorageTier tier, NxtPageType
     return true;
 }
 
+// ── Helper: compare pages by page_id for sorting ──────────────────────
+static int page_cmp_by_id(const void *a, const void *b) {
+    const NxtPage *pa = *(const NxtPage **)a;
+    const NxtPage *pb = *(const NxtPage **)b;
+    if (pa->page_id < pb->page_id) return -1;
+    if (pa->page_id > pb->page_id) return 1;
+    return 0;
+}
+
+// ── Defrag scoring ────────────────────────────────────────────────────
+// Iterates every tier×type group, measures free-page dispersion, and
+// returns a pool-wide fragmentation score in [0.0, 1.0].
+//   0.0 = all free pages form a single contiguous block per group
+//   1.0 = free pages are maximally interleaved with used pages
+float nxt_calc_defrag_score(NxtGlobalBufferPool *pool) {
+    if (!pool->pages_array || pool->pages_count == 0) return 0.0f;
+
+    float total_score = 0.0f;
+    int   groups_measured = 0;
+
+    for (int tier = 0; tier < TIER_COUNT; tier++) {
+        for (int type = 0; type < PAGE_TYPE_COUNT; type++) {
+
+            // Collect pages of this tier×type, sorted by page_id
+            NxtPage *group[4096];
+            size_t   count = 0;
+
+            for (size_t i = 0; i < pool->pages_count && count < 4096; i++) {
+                NxtPage *p = &pool->pages_array[i];
+                if ((int)p->tier == tier && (int)p->type == type)
+                    group[count++] = p;
+            }
+            if (count < 2) continue;
+
+            qsort(group, count, sizeof(NxtPage *), page_cmp_by_id);
+
+            // Count contiguous free-page runs
+            size_t free_runs  = 0;
+            size_t total_free = 0;
+            bool   in_run     = false;
+
+            for (size_t i = 0; i < count; i++) {
+                if (group[i]->ref_count == 0) {
+                    total_free++;
+                    if (!in_run) { free_runs++; in_run = true; }
+                } else {
+                    in_run = false;
+                }
+            }
+
+            if (total_free > 1) {
+                float gscore = (float)(free_runs - 1) / (float)(total_free - 1);
+                total_score += gscore;
+            }
+            groups_measured++;
+        }
+    }
+
+    if (groups_measured == 0) return 0.0f;
+    pool->defrag_score = total_score / (float)groups_measured;
+    return pool->defrag_score;
+}
+
 // ── Background defragmentation ────────────────────────────────────────
 // Within-tier compaction: moves used pages toward low page_ids, creating
 // a contiguous free region at the end of each tier×type group.
@@ -343,20 +411,19 @@ bool nxt_evict_lru_k(NxtGlobalBufferPool *pool, NxtStorageTier tier, NxtPageType
 //  5) Remaining used pages swap data with free pages at lower page_ids
 //  6) This compacts used pages to the front, freeing contiguous space at the back
 
-// ── Helper: compare pages by page_id for sorting ──────────────────────
-static int page_cmp_by_id(const void *a, const void *b) {
-    const NxtPage *pa = *(const NxtPage **)a;
-    const NxtPage *pb = *(const NxtPage **)b;
-    if (pa->page_id < pb->page_id) return -1;
-    if (pa->page_id > pb->page_id) return 1;
-    return 0;
-}
-
 void nxt_defrag_background(NxtGlobalBufferPool *pool) {
     if (!pool->pages_array) return;
 
     size_t total_pages = pool->pages_count;
     if (total_pages == 0) return;
+
+    // Score-driven: skip defrag when fragmentation is below threshold
+    float score = nxt_calc_defrag_score(pool);
+    if (score < pool->defrag_threshold) {
+        fprintf(stderr, "[nxtLLM] defrag score %.3f below threshold %.3f, skipping\n",
+                (double)score, (double)pool->defrag_threshold);
+        return;
+    }
 
     // Per tier+type: collect all pages, separate used from free
     for (int tier = 0; tier < TIER_COUNT; tier++) {
@@ -442,7 +509,34 @@ void nxt_defrag_background(NxtGlobalBufferPool *pool) {
     pool->total_defrag_rounds++;
 
     fprintf(stderr, "[nxtLLM] defrag round %lu complete: "
-            "tier_used=[%zu, %zu, %zu] bytes\n",
+            "tier_used=[%zu, %zu, %zu] bytes, score=%.3f\n",
             (unsigned long)pool->total_defrag_rounds,
-            pool->tier_used[0], pool->tier_used[1], pool->tier_used[2]);
+            pool->tier_used[0], pool->tier_used[1], pool->tier_used[2],
+            (double)nxt_calc_defrag_score(pool));
+}
+
+// ── Background defrag thread ──────────────────────────────────────────
+void *nxt_defrag_thread_func(void *arg) {
+    NxtGlobalBufferPool *pool = (NxtGlobalBufferPool *)arg;
+
+    while (pool->defrag_thread_running) {
+        sleep((unsigned int)pool->defrag_interval_sec);
+        if (!pool->defrag_thread_running) break;
+
+        nxt_defrag_background(pool);
+        pool->last_defrag_time = (uint64_t)time(NULL);
+    }
+    return NULL;
+}
+
+void nxt_start_defrag_thread(NxtGlobalBufferPool *pool) {
+    if (pool->defrag_thread_running) return;
+    pool->defrag_thread_running = true;
+    pthread_create(&pool->defrag_thread, NULL, nxt_defrag_thread_func, pool);
+}
+
+void nxt_stop_defrag_thread(NxtGlobalBufferPool *pool) {
+    if (!pool->defrag_thread_running) return;
+    pool->defrag_thread_running = false;
+    pthread_join(pool->defrag_thread, NULL);
 }

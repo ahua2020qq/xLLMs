@@ -40,6 +40,9 @@ target_include_directories(nxtllm_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+find_package(Threads REQUIRED)
+target_link_libraries(nxtllm_core PUBLIC Threads::Threads)
+
 # ── Operator library (CUDA) ──────────────────────────────────────────
 if(USE_CUDA)
     add_library(nxtllm_operators STATIC
