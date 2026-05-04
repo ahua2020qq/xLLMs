@@ -31,6 +31,46 @@ typedef enum {
     TIER_COUNT = 3
 } NxtStorageTier;
 
+// ── Defrag strategy (pluggable policy) ────────────────────────────────
+typedef enum {
+    DEFRAG_STRATEGY_TIERED  = 0,  // Universal-style: merge adjacent free blocks
+    DEFRAG_STRATEGY_LEVELED = 1,  // Leveled-style: move hot pages toward faster tiers
+    DEFRAG_STRATEGY_GREEDY  = 2,  // Greedy: always merge smallest free blocks first
+    DEFRAG_STRATEGY_COUNT   = 3
+} NxtDefragStrategy;
+
+// ── Memory pressure levels (progressive write stall) ───────────────────
+typedef enum {
+    PRESSURE_NORMAL    = 0,  // normal operation
+    PRESSURE_SLOWDOWN  = 1,  // slow allocations (sleep 1ms)
+    PRESSURE_STOP      = 2,  // block allocations until defrag completes
+} NxtMemoryPressure;
+
+// ── Forward declaration for function pointer types ───────────────────
+typedef struct NxtGlobalBufferPool NxtGlobalBufferPool;
+
+// ── Single defrag job (compaction-style: pick → compact → install) ────
+typedef struct {
+    uint32_t fragmented_tier;    // tier being compacted
+    uint32_t fragmented_type;    // page type being compacted
+    uint32_t *victim_pages;      // selected fragmented page ids
+    uint32_t  victim_count;
+    uint32_t  target_count;      // target contiguous pages created
+    uint64_t  bytes_reclaimed;   // bytes recovered after compaction
+    uint64_t  start_ts;          // job start timestamp (us)
+} NxtDefragJob;
+
+// ── Pluggable defrag scheduler ─────────────────────────────────────────
+typedef struct NxtDefragScheduler {
+    NxtDefragStrategy strategy;
+    double   score_threshold;        // trigger defrag when score exceeds this
+    uint32_t max_concurrent_jobs;    // max concurrent defrag tasks
+    uint32_t interval_ms;            // scan interval in milliseconds
+    void   (*pick_source)(NxtGlobalBufferPool *, NxtDefragJob *);
+    void   (*compact)(NxtGlobalBufferPool *, NxtDefragJob *);
+    void   (*install)(NxtGlobalBufferPool *, NxtDefragJob *);
+} NxtDefragScheduler;
+
 // ── Single memory page ────────────────────────────────────────────────
 typedef struct NxtPage {
     uint32_t      page_id;
@@ -39,6 +79,7 @@ typedef struct NxtPage {
     int32_t       ref_count;      // atomic reference count
     void         *data;           // pointer to the page data
     size_t        size;           // page size in bytes
+    float         utilization;    // ratio of valid data within page [0.0, 1.0]
 
     // LRU-K timestamps are stored externally in LruKCache (indexed by page_id)
 
@@ -73,7 +114,7 @@ typedef struct {
 } NxtPageHash;
 
 // ── Global buffer pool ────────────────────────────────────────────────
-typedef struct {
+typedef struct NxtGlobalBufferPool {
     // Per-tier, per-type free page lists (doubly-linked)
     NxtPage  *free_heads[TIER_COUNT][PAGE_TYPE_COUNT];
     NxtPage  *free_tails[TIER_COUNT][PAGE_TYPE_COUNT];
@@ -93,6 +134,9 @@ typedef struct {
     size_t    tier_capacity[TIER_COUNT];
     size_t    tier_used[TIER_COUNT];
 
+    // Pluggable defrag scheduler
+    NxtDefragScheduler defrag_sched;   // active strategy + function pointers
+
     // Defrag scoring and background thread
     float     defrag_score;           // current fragmentation score [0.0, 1.0]
     float     defrag_threshold;       // trigger defrag when score exceeds this
@@ -105,6 +149,7 @@ typedef struct {
     uint64_t  total_allocations;
     uint64_t  total_evictions;
     uint64_t  total_defrag_rounds;
+    uint64_t  total_bytes_reclaimed;  // cumulative bytes recovered by defrag
 } NxtGlobalBufferPool;
 
 // ── Hash table operations ─────────────────────────────────────────────
@@ -144,5 +189,27 @@ float nxt_calc_defrag_score(NxtGlobalBufferPool *pool);
 void *nxt_defrag_thread_func(void *arg);
 void  nxt_start_defrag_thread(NxtGlobalBufferPool *pool);
 void  nxt_stop_defrag_thread(NxtGlobalBufferPool *pool);
+
+// ── Compaction-style defrag (pick → compact → install) ──────────────────
+void nxt_defrag_run(NxtGlobalBufferPool *pool, NxtDefragJob *job);
+void nxt_defrag_pick_source_tiered(NxtGlobalBufferPool *pool, NxtDefragJob *job);
+void nxt_defrag_pick_source_leveled(NxtGlobalBufferPool *pool, NxtDefragJob *job);
+void nxt_defrag_pick_source_greedy(NxtGlobalBufferPool *pool, NxtDefragJob *job);
+void nxt_defrag_compact(NxtGlobalBufferPool *pool, NxtDefragJob *job);
+void nxt_defrag_install(NxtGlobalBufferPool *pool, NxtDefragJob *job);
+
+// ── Pluggable strategy configuration ─────────────────────────────────────
+void nxt_defrag_scheduler_init(NxtDefragScheduler *sched, NxtDefragStrategy strategy);
+void nxt_defrag_set_strategy(NxtGlobalBufferPool *pool, NxtDefragStrategy strategy);
+
+// ── Compensatory eviction ────────────────────────────────────────────────
+void    nxt_page_set_utilization(NxtPage *page, float util);
+uint64_t nxt_page_eviction_priority(NxtPage *page, LruKCache *lru_k,
+                                     uint64_t now_ts, float compensation_factor);
+bool    nxt_evict_lru_k_compensated(NxtGlobalBufferPool *pool, NxtStorageTier tier,
+                                     NxtPageType type, float compensation_factor);
+
+// ── Memory pressure (progressive write stall) ────────────────────────────
+NxtMemoryPressure nxt_check_memory_pressure(NxtGlobalBufferPool *pool);
 
 #endif // PAGE_POOL_H

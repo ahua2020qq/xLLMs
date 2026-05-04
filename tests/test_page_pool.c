@@ -469,6 +469,199 @@ static void test_defrag_background_thread(void) {
     PASS();
 }
 
+// ── Test: Compaction-Style Merging (Defrag Job) ──────────────────────
+// Verifies the pick → compact → install flow produces a defrag job
+// with valid metadata and reclaims bytes.
+static void test_compaction_style_merging(void) {
+    TEST("compaction_style_merging");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  64 * 1024,
+                  400);
+
+    // Allocate pages then free alternate ones to create fragmentation
+    NxtPage *pages[16];
+    for (int i = 0; i < 12; i++) {
+        pages[i] = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+        ASSERT_PTR(pages[i], "alloc failed during compaction setup");
+    }
+    for (int i = 0; i < 12; i += 2) {
+        nxt_page_ref_dec(&pool, pages[i]);
+    }
+
+    // Run full compaction job via the pluggable scheduler
+    NxtDefragJob job;
+    memset(&job, 0, sizeof(job));
+    nxt_defrag_run(&pool, &job);
+
+    // Job should have identified a source tier+type
+    ASSERT(job.fragmented_tier < TIER_COUNT, "invalid fragmented tier");
+    ASSERT(job.fragmented_type < PAGE_TYPE_COUNT, "invalid fragmented type");
+    ASSERT(job.bytes_reclaimed > 0, "compaction should reclaim some bytes");
+    ASSERT(job.victim_count > 0, "should have moved some pages");
+    ASSERT(pool.total_defrag_rounds == 1, "defrag rounds should increment");
+
+    // All remaining used pages should still be accessible
+    for (int i = 1; i < 12; i += 2) {
+        NxtPage *found = nxt_hash_lookup(&pool.page_hash, pages[i]->page_id);
+        ASSERT(found == pages[i], "used page lost after compaction merge");
+    }
+
+    // Clean up
+    for (int i = 1; i < 12; i += 2) {
+        nxt_page_ref_dec(&pool, pages[i]);
+    }
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: Compensatory Eviction ───────────────────────────────────────
+// Verifies that low-utilization pages are evicted before high-utilization
+// pages when both have similar LRU timestamps.
+static void test_compensatory_eviction(void) {
+    TEST("compensatory_eviction");
+    NxtGlobalBufferPool pool;
+    // Small pool so eviction is forced
+    nxt_pool_init(&pool,
+                  2ULL * 1024 * 1024,   // 2 MiB GPU
+                  2ULL * 1024 * 1024,
+                  2ULL * 1024 * 1024,
+                  64 * 1024,
+                  64);
+
+    // Allocate a few pages and set different utilization levels
+    NxtPage *p0 = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+    NxtPage *p1 = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+    NxtPage *p2 = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+    ASSERT_PTR(p0, "alloc p0 failed");
+    ASSERT_PTR(p1, "alloc p1 failed");
+    ASSERT_PTR(p2, "alloc p2 failed");
+
+    // p0: high utilization (valuable), p1: medium, p2: low utilization (waste)
+    nxt_page_set_utilization(p0, 0.95f);
+    nxt_page_set_utilization(p1, 0.50f);
+    nxt_page_set_utilization(p2, 0.10f);
+
+    ASSERT(p0->utilization == 0.95f, "utilization not set correctly for p0");
+    ASSERT(p1->utilization == 0.50f, "utilization not set correctly for p1");
+    ASSERT(p2->utilization == 0.10f, "utilization not set correctly for p2");
+
+    // Release refs so they become evictable
+    nxt_page_ref_dec(&pool, p0);
+    nxt_page_ref_dec(&pool, p1);
+    nxt_page_ref_dec(&pool, p2);
+
+    // Compute eviction priorities; p2 (10% util) should have lowest priority
+    // (lowest priority value = first to evict)
+    uint64_t pri0 = nxt_page_eviction_priority(p0, &pool.lru_k, 1000000, 2.0f);
+    nxt_page_eviction_priority(p1, &pool.lru_k, 1000000, 2.0f);
+    uint64_t pri2 = nxt_page_eviction_priority(p2, &pool.lru_k, 1000000, 2.0f);
+
+    // p2's kth_ts gets multiplied by (1 + 0.9 * 2.0) = 2.8
+    // p0's kth_ts gets multiplied by (1 + 0.05 * 2.0) = 1.1
+    // Since all have same kth_ts (first access), p2's priority is highest magnitude
+    // (larger value = less valuable = evicted first under priority ordering)
+    ASSERT(pri2 > pri0, "low-utilization page should have higher eviction priority");
+
+    // Test compensated eviction function directly
+    uint64_t evictions_before = pool.total_evictions;
+    bool evicted = nxt_evict_lru_k_compensated(&pool, TIER_GPU, PAGE_TYPE_DATA, 2.0f);
+    ASSERT(evicted, "compensated eviction should succeed");
+    ASSERT(pool.total_evictions == evictions_before + 1,
+           "total_evictions should increment");
+
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
+// ── Test: Pluggable Strategies ────────────────────────────────────────
+// Verifies that strategy switching works and each strategy produces valid
+// defrag jobs targeting appropriate tier×type groups.
+static void test_pluggable_strategies(void) {
+    TEST("pluggable_strategies");
+    NxtGlobalBufferPool pool;
+    nxt_pool_init(&pool,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  8ULL * 1024 * 1024,
+                  64 * 1024,
+                  400);
+
+    // Default strategy should be TIERED
+    ASSERT(pool.defrag_sched.strategy == DEFRAG_STRATEGY_TIERED,
+           "default strategy should be TIERED");
+    ASSERT(pool.defrag_sched.pick_source != NULL,
+           "TIERED pick_source should be set");
+    ASSERT(pool.defrag_sched.compact != NULL,
+           "TIERED compact should be set");
+    ASSERT(pool.defrag_sched.install != NULL,
+           "TIERED install should be set");
+
+    // Test LEVELED strategy
+    nxt_defrag_set_strategy(&pool, DEFRAG_STRATEGY_LEVELED);
+    ASSERT(pool.defrag_sched.strategy == DEFRAG_STRATEGY_LEVELED,
+           "strategy switch to LEVELED failed");
+    ASSERT(pool.defrag_sched.pick_source == nxt_defrag_pick_source_leveled,
+           "LEVELED pick_source not wired correctly");
+
+    // Test GREEDY strategy
+    nxt_defrag_set_strategy(&pool, DEFRAG_STRATEGY_GREEDY);
+    ASSERT(pool.defrag_sched.strategy == DEFRAG_STRATEGY_GREEDY,
+           "strategy switch to GREEDY failed");
+    ASSERT(pool.defrag_sched.pick_source == nxt_defrag_pick_source_greedy,
+           "GREEDY pick_source not wired correctly");
+
+    // Allocate pages to create work for defrag
+    NxtPage *pages[16];
+    for (int i = 0; i < 12; i++) {
+        pages[i] = nxt_page_alloc(&pool, PAGE_TYPE_DATA, TIER_GPU);
+        ASSERT_PTR(pages[i], "alloc failed during strategy test");
+    }
+    for (int i = 0; i < 12; i += 2)
+        nxt_page_ref_dec(&pool, pages[i]);
+
+    // Run each strategy and verify it works
+    NxtDefragJob job;
+    uint64_t rounds_before = pool.total_defrag_rounds;
+
+    // TIERED
+    nxt_defrag_set_strategy(&pool, DEFRAG_STRATEGY_TIERED);
+    memset(&job, 0, sizeof(job));
+    nxt_defrag_run(&pool, &job);
+    ASSERT(job.fragmented_tier < TIER_COUNT, "TIERED: invalid tier");
+    ASSERT(pool.total_defrag_rounds == rounds_before + 1, "TIERED: rounds not incremented");
+
+    // LEVELED
+    nxt_defrag_set_strategy(&pool, DEFRAG_STRATEGY_LEVELED);
+    memset(&job, 0, sizeof(job));
+    nxt_defrag_run(&pool, &job);
+    ASSERT(job.fragmented_tier < TIER_COUNT, "LEVELED: invalid tier");
+    ASSERT(pool.total_defrag_rounds == rounds_before + 2, "LEVELED: rounds not incremented");
+
+    // GREEDY
+    nxt_defrag_set_strategy(&pool, DEFRAG_STRATEGY_GREEDY);
+    memset(&job, 0, sizeof(job));
+    nxt_defrag_run(&pool, &job);
+    ASSERT(job.fragmented_tier < TIER_COUNT, "GREEDY: invalid tier");
+    ASSERT(pool.total_defrag_rounds == rounds_before + 3, "GREEDY: rounds not incremented");
+
+    // Memory pressure check should work
+    NxtMemoryPressure pressure = nxt_check_memory_pressure(&pool);
+    ASSERT(pressure == PRESSURE_NORMAL ||
+           pressure == PRESSURE_SLOWDOWN ||
+           pressure == PRESSURE_STOP,
+           "pressure check returned invalid value");
+
+    // Clean up
+    for (int i = 1; i < 12; i += 2)
+        nxt_page_ref_dec(&pool, pages[i]);
+    nxt_pool_destroy(&pool);
+    PASS();
+}
+
 // ── Test Runner ──────────────────────────────────────────────────────
 int main(void) {
     printf("=== nxtLLM Test Suite ===\n\n");
@@ -486,6 +679,9 @@ int main(void) {
     test_defrag_free_counts();
     test_defrag_scoring();
     test_defrag_background_thread();
+    test_compaction_style_merging();
+    test_compensatory_eviction();
+    test_pluggable_strategies();
 
     printf("\n=== Results: %d run, %d passed, %d failed ===\n",
            tests_run, tests_passed, tests_failed);

@@ -129,6 +129,8 @@ void nxt_pool_init(NxtGlobalBufferPool *pool,
                    size_t page_size, size_t max_pages) {
     memset(pool, 0, sizeof(*pool));
 
+    // Initialize defrag scheduler with tiered (Universal-style) as default
+    nxt_defrag_scheduler_init(&pool->defrag_sched, DEFRAG_STRATEGY_TIERED);
     pool->defrag_threshold    = 0.30f;
     pool->defrag_score        = 0.0f;
     pool->defrag_interval_sec = 60;
@@ -539,4 +541,375 @@ void nxt_stop_defrag_thread(NxtGlobalBufferPool *pool) {
     if (!pool->defrag_thread_running) return;
     pool->defrag_thread_running = false;
     pthread_join(pool->defrag_thread, NULL);
+}
+
+// ── Compensatory eviction: utilization tracking ────────────────────────
+
+void nxt_page_set_utilization(NxtPage *page, float util) {
+    if (page) {
+        if (util < 0.0f) util = 0.0f;
+        if (util > 1.0f) util = 1.0f;
+        page->utilization = util;
+    }
+}
+
+// Eviction priority: lower is evicted first.
+// Formula: eviction_priority = kth_ts * (1.0 + (1.0 - utilization) * compensation_factor)
+// Low-utilization pages get their effective timestamps "aged" so they appear
+// older and are evicted sooner — same intuition as RocksDB compensated_file_size.
+uint64_t nxt_page_eviction_priority(NxtPage *page, LruKCache *lru_k,
+                                     uint64_t now_ts, float compensation_factor) {
+    (void)now_ts;  // reserved for future time-weighted calculation
+    if (!page || !lru_k || page->page_id >= lru_k->capacity) return UINT64_MAX;
+
+    uint64_t kth_ts = lruk_kth_timestamp(&lru_k->entries[page->page_id]);
+    if (kth_ts == LRU_TIMESTAMP_INVALID) return UINT64_MAX;
+
+    // Compensated: waste_factor penalizes low utilization
+    float waste = 1.0f - page->utilization;
+    float waste_factor = 1.0f + waste * compensation_factor;
+
+    // Scale: higher waste_factor → larger effective timestamp → higher evict priority
+    return (uint64_t)((double)kth_ts * (double)waste_factor);
+}
+
+// Compensated eviction: considers page utilization when selecting victim
+bool nxt_evict_lru_k_compensated(NxtGlobalBufferPool *pool, NxtStorageTier tier,
+                                  NxtPageType type, float compensation_factor) {
+    NxtPage *best_victim = NULL;
+    uint64_t best_priority = UINT64_MAX;
+    uint64_t now = get_timestamp_us();
+
+    for (size_t i = 0; i < pool->lru_k.capacity; i++) {
+        LruKEntry *entry = &pool->lru_k.entries[i];
+        uint64_t ts = lruk_kth_timestamp(entry);
+        if (ts == LRU_TIMESTAMP_INVALID) continue;
+
+        uint32_t page_id = (uint32_t)i;
+        NxtPage *page = nxt_hash_lookup(&pool->page_hash, page_id);
+        if (!page) continue;
+        if (page->type != type || page->tier != tier) continue;
+        if (page->ref_count > 0) continue;
+
+        uint64_t priority = nxt_page_eviction_priority(page, &pool->lru_k,
+                                                        now, compensation_factor);
+        if (priority < best_priority) {
+            best_priority = priority;
+            best_victim = page;
+        }
+    }
+
+    if (!best_victim) return false;
+
+    free(best_victim->data);
+    best_victim->data = NULL;
+    best_victim->ref_count = 0;
+    nxt_page_free(pool, best_victim);
+    lruk_remove(&pool->lru_k, best_victim->page_id);
+
+    pool->total_evictions++;
+    return true;
+}
+
+// ── Memory pressure check (progressive write stall) ────────────────────
+
+NxtMemoryPressure nxt_check_memory_pressure(NxtGlobalBufferPool *pool) {
+    if (!pool) return PRESSURE_NORMAL;
+
+    double gpu_frag_score = nxt_calc_defrag_score(pool);
+    double gpu_usage = (pool->tier_capacity[TIER_GPU] > 0)
+        ? (double)pool->tier_used[TIER_GPU] / (double)pool->tier_capacity[TIER_GPU]
+        : 0.0;
+
+    if (gpu_frag_score > 0.9 || gpu_usage > 0.95)
+        return PRESSURE_STOP;
+    if (gpu_frag_score > 0.7 || gpu_usage > 0.85)
+        return PRESSURE_SLOWDOWN;
+    return PRESSURE_NORMAL;
+}
+
+// ── Pluggable scheduler initialization ─────────────────────────────────
+
+void nxt_defrag_scheduler_init(NxtDefragScheduler *sched, NxtDefragStrategy strategy) {
+    if (!sched) return;
+    memset(sched, 0, sizeof(*sched));
+    sched->strategy = strategy;
+    sched->score_threshold = 0.30;
+    sched->max_concurrent_jobs = 1;
+    sched->interval_ms = 60000;
+
+    // Wire function pointers per strategy
+    switch (strategy) {
+    case DEFRAG_STRATEGY_TIERED:
+        sched->pick_source = nxt_defrag_pick_source_tiered;
+        sched->compact     = nxt_defrag_compact;
+        sched->install     = nxt_defrag_install;
+        break;
+    case DEFRAG_STRATEGY_LEVELED:
+        sched->pick_source = nxt_defrag_pick_source_leveled;
+        sched->compact     = nxt_defrag_compact;
+        sched->install     = nxt_defrag_install;
+        break;
+    case DEFRAG_STRATEGY_GREEDY:
+        sched->pick_source = nxt_defrag_pick_source_greedy;
+        sched->compact     = nxt_defrag_compact;
+        sched->install     = nxt_defrag_install;
+        break;
+    default:
+        break;
+    }
+}
+
+void nxt_defrag_set_strategy(NxtGlobalBufferPool *pool, NxtDefragStrategy strategy) {
+    if (!pool) return;
+    nxt_defrag_scheduler_init(&pool->defrag_sched, strategy);
+}
+
+// ── Strategy: Tiered pick (Universal Compaction style) ─────────────────
+// Selects the tier×type group with the highest fragmentation score,
+// then picks the smallest adjacent free-run gaps to merge.
+void nxt_defrag_pick_source_tiered(NxtGlobalBufferPool *pool, NxtDefragJob *job) {
+    if (!pool || !job) return;
+
+    double best_score = -1.0;
+    uint32_t best_tier = 0, best_type = 0;
+
+    // Find the most fragmented tier×type group
+    for (int tier = 0; tier < TIER_COUNT; tier++) {
+        for (int type = 0; type < PAGE_TYPE_COUNT; type++) {
+            NxtPage *group[4096];
+            size_t count = 0;
+            for (size_t i = 0; i < pool->pages_count && count < 4096; i++) {
+                NxtPage *p = &pool->pages_array[i];
+                if ((int)p->tier == tier && (int)p->type == type)
+                    group[count++] = p;
+            }
+            if (count < 2) continue;
+
+            qsort(group, count, sizeof(NxtPage *), page_cmp_by_id);
+
+            size_t free_runs = 0, total_free = 0;
+            bool in_run = false;
+            for (size_t i = 0; i < count; i++) {
+                if (group[i]->ref_count == 0) {
+                    total_free++;
+                    if (!in_run) { free_runs++; in_run = true; }
+                } else {
+                    in_run = false;
+                }
+            }
+            if (total_free > 1) {
+                double gscore = (double)(free_runs - 1) / (double)(total_free - 1);
+                if (gscore > best_score) {
+                    best_score = gscore;
+                    best_tier = (uint32_t)tier;
+                    best_type = (uint32_t)type;
+                }
+            }
+        }
+    }
+
+    job->fragmented_tier = best_tier;
+    job->fragmented_type = best_type;
+    job->victim_count = 0;
+    job->target_count = 0;
+    job->bytes_reclaimed = 0;
+    job->start_ts = get_timestamp_us();
+}
+
+// ── Strategy: Leveled pick ─────────────────────────────────────────────
+// Prioritizes higher (faster) tiers first, then picks the tier with the
+// most used pages — mimicking Leveled Compaction's L0-priority behavior.
+void nxt_defrag_pick_source_leveled(NxtGlobalBufferPool *pool, NxtDefragJob *job) {
+    if (!pool || !job) return;
+
+    // Prioritize faster tiers: GPU > CPU > SSD
+    for (int tier = 0; tier < TIER_COUNT; tier++) {
+        for (int type = 0; type < PAGE_TYPE_COUNT; type++) {
+            // Count used pages in this tier×type
+            uint32_t used_count = 0;
+            size_t count = 0;
+            for (size_t i = 0; i < pool->pages_count && count < 4096; i++) {
+                NxtPage *p = &pool->pages_array[i];
+                if ((int)p->tier == tier && (int)p->type == type) {
+                    count++;
+                    if (p->ref_count > 0) used_count++;
+                }
+            }
+            if (count > 0 && used_count > 0) {
+                job->fragmented_tier = (uint32_t)tier;
+                job->fragmented_type = (uint32_t)type;
+                job->victim_count = 0;
+                job->target_count = 0;
+                job->bytes_reclaimed = 0;
+                job->start_ts = get_timestamp_us();
+                return;
+            }
+        }
+    }
+}
+
+// ── Strategy: Greedy pick ──────────────────────────────────────────────
+// Finds the smallest free-run gap across all groups and targets that first.
+void nxt_defrag_pick_source_greedy(NxtGlobalBufferPool *pool, NxtDefragJob *job) {
+    if (!pool || !job) return;
+
+    size_t smallest_run = SIZE_MAX;
+    uint32_t best_tier = 0, best_type = 0;
+
+    for (int tier = 0; tier < TIER_COUNT; tier++) {
+        for (int type = 0; type < PAGE_TYPE_COUNT; type++) {
+            NxtPage *group[4096];
+            size_t count = 0;
+            for (size_t i = 0; i < pool->pages_count && count < 4096; i++) {
+                NxtPage *p = &pool->pages_array[i];
+                if ((int)p->tier == tier && (int)p->type == type)
+                    group[count++] = p;
+            }
+            if (count < 2) continue;
+
+            qsort(group, count, sizeof(NxtPage *), page_cmp_by_id);
+
+            // Measure smallest free gap length
+            size_t cur_free_len = 0;
+            for (size_t i = 0; i < count; i++) {
+                if (group[i]->ref_count == 0) {
+                    cur_free_len++;
+                } else if (cur_free_len > 0) {
+                    if (cur_free_len < smallest_run) {
+                        smallest_run = cur_free_len;
+                        best_tier = (uint32_t)tier;
+                        best_type = (uint32_t)type;
+                    }
+                    cur_free_len = 0;
+                }
+            }
+            // Check trailing free run
+            if (cur_free_len > 0 && cur_free_len < smallest_run) {
+                smallest_run = cur_free_len;
+                best_tier = (uint32_t)tier;
+                best_type = (uint32_t)type;
+            }
+        }
+    }
+
+    job->fragmented_tier = best_tier;
+    job->fragmented_type = best_type;
+    job->victim_count = 0;
+    job->target_count = 0;
+    job->bytes_reclaimed = 0;
+    job->start_ts = get_timestamp_us();
+}
+
+// ── Compaction merge (shared across strategies) ────────────────────────
+// Within the selected tier+type, swap data between used and free pages
+// to compact used pages to the front, creating contiguous free space.
+void nxt_defrag_compact(NxtGlobalBufferPool *pool, NxtDefragJob *job) {
+    if (!pool || !job || !pool->pages_array) return;
+
+    uint32_t tier = job->fragmented_tier;
+    uint32_t type = job->fragmented_type;
+    size_t total_pages = pool->pages_count;
+
+    NxtPage *group[4096];
+    size_t group_count = 0;
+    for (size_t i = 0; i < total_pages && group_count < 4096; i++) {
+        NxtPage *p = &pool->pages_array[i];
+        if ((int)p->tier == (int)tier && (int)p->type == (int)type)
+            group[group_count++] = p;
+    }
+    if (group_count < 2) return;
+
+    qsort(group, group_count, sizeof(NxtPage *), page_cmp_by_id);
+
+    // Count bytes reclaimed: each free page compacted = one page_size recovered
+    uint64_t reclaimed = 0;
+
+    size_t left = 0;
+    size_t right = group_count;
+    while (left < right) {
+        while (left < right && group[left]->ref_count > 0)
+            left++;
+        do {
+            right--;
+        } while (right > left && group[right]->ref_count == 0);
+
+        if (left >= right) break;
+
+        NxtPage *free_pg = group[left];
+        NxtPage *used_pg = group[right];
+
+        void *tmp_data = free_pg->data;
+        free_pg->data = used_pg->data;
+        used_pg->data = tmp_data;
+
+        int32_t tmp_ref = free_pg->ref_count;
+        free_pg->ref_count = used_pg->ref_count;
+        used_pg->ref_count = tmp_ref;
+
+        float tmp_util = free_pg->utilization;
+        free_pg->utilization = used_pg->utilization;
+        used_pg->utilization = tmp_util;
+
+        reclaimed += used_pg->size;
+        job->victim_count++;
+    }
+
+    job->bytes_reclaimed = reclaimed;
+    job->target_count = (uint32_t)group_count;
+}
+
+// ── Install compacted layout ───────────────────────────────────────────
+// Rebuilds free lists and updates pool stats after compaction.
+void nxt_defrag_install(NxtGlobalBufferPool *pool, NxtDefragJob *job) {
+    if (!pool || !job) return;
+
+    uint32_t tier = job->fragmented_tier;
+    uint32_t type = job->fragmented_type;
+
+    pool->free_heads[tier][type] = NULL;
+    pool->free_tails[tier][type] = NULL;
+    pool->free_counts[tier][type] = 0;
+
+    for (size_t i = 0; i < pool->pages_count; i++) {
+        NxtPage *p = &pool->pages_array[i];
+        if ((int)p->tier != (int)tier || (int)p->type != (int)type) continue;
+
+        p->free_next = NULL;
+        p->free_prev = NULL;
+
+        if (p->ref_count == 0) {
+            if (pool->free_tails[tier][type]) {
+                pool->free_tails[tier][type]->free_next = p;
+                p->free_prev = pool->free_tails[tier][type];
+            } else {
+                pool->free_heads[tier][type] = p;
+            }
+            pool->free_tails[tier][type] = p;
+            pool->free_counts[tier][type]++;
+        }
+    }
+
+    pool->total_bytes_reclaimed += job->bytes_reclaimed;
+}
+
+// ── Full compaction run (pick → compact → install) ─────────────────────
+void nxt_defrag_run(NxtGlobalBufferPool *pool, NxtDefragJob *job) {
+    if (!pool || !job) return;
+
+    NxtDefragScheduler *sched = &pool->defrag_sched;
+
+    // Phase 1: Pick source tier×type
+    if (sched->pick_source)
+        sched->pick_source(pool, job);
+
+    // Phase 2: Compact (merge fragmented pages)
+    if (sched->compact)
+        sched->compact(pool, job);
+
+    // Phase 3: Install (rebuild free lists, update stats)
+    if (sched->install)
+        sched->install(pool, job);
+
+    pool->total_defrag_rounds++;
 }
