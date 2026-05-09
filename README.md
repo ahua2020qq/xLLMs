@@ -257,23 +257,6 @@ xLLMs/
 
 **GGUF v3 Loader** — Full binary parser. Q4_K/Q6_K dequantization. Architecture auto-detection (llama, qwen2, ...). Successfully loads Llama-3-8B on V100.
 
-## Competitive Positioning
-
-| Dimension | xLLM v0.5 | vLLM | SGLang | Triton | llama.cpp |
-|-----------|-----------|------|--------|--------|-----------|
-| Three-tier storage | ✅ GPU/CPU/SSD | GPU/CPU | GPU/CPU | GPU/CPU | CPU/Disk |
-| Prefix sharing | ✅ Radix tree | ❌ | ✅ RadixCache | ❌ | ❌ |
-| LRU-K eviction | ✅ K=3 + O(1) hash | LRU | Pluggable | — | LRU |
-| Defragmentation | ✅ Per-tier compaction | ❌ | ❌ | ❌ | ❌ |
-| GPU operators | ✅ V1 + V2 pipeline | ✅ Full | ✅ Full | ✅ Full | ❌ |
-| Multi-backend plugin | ✅ dlopen | ❌ | ❌ | ✅ | ❌ |
-| Model version control | ✅ | ❌ | ❌ | ✅ | ❌ |
-| Continuous batching | ✅ | ✅ | ✅ | ✅ | ❌ |
-| GGUF loading | ✅ v3 + Q4_K/Q6_K | ❌ | ❌ | ❌ | ✅ native |
-| Multi-model support | 🔶 GGUF ready | ✅ | ✅ | ✅ | ✅ |
-| Quantization | 🔶 GGUF Q4/Q6 | ✅ GPTQ/AWQ | ✅ | ✅ | ✅ GGUF full |
-| HTTP/gRPC API | ❌ | ✅ | ✅ | ✅ | ❌ |
-
 ## Contributors
 
 Thanks to the following contributors who made this project possible:
