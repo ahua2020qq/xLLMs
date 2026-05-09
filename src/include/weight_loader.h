@@ -1,19 +1,19 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * nxtLLM Weight Loader — GPT-2 Model Weights
+ * xLLM Weight Loader — GPT-2 Model Weights
  *
  * Loads GPT-2 weights from a flat binary format produced by
  * scripts/convert_gpt2_weights.py (which reads Hugging Face
  * safetensors / PyTorch .bin files).
  */
 
-#ifndef NXTLLM_WEIGHT_LOADER_H_
-#define NXTLLM_WEIGHT_LOADER_H_
+#ifndef XLLM_WEIGHT_LOADER_H_
+#define XLLM_WEIGHT_LOADER_H_
 
 #include <stdint.h>
 #include <stddef.h>
@@ -24,7 +24,7 @@ extern "C" {
 #endif
 
 /* ── GPT-2 model configuration ─────────────────────────────────────── */
-typedef struct {
+typedef struct Gpt2Config {
     int32_t vocab_size;       /* 50257 */
     int32_t n_positions;      /* 1024 */
     int32_t n_embd;           /* 768 (small), 1024 (medium), 1600 (large) */
@@ -58,6 +58,8 @@ typedef struct {
     /* Final layer norm */
     float *ln_f_weight;      /* [n_embd] */
     float *ln_f_bias;        /* [n_embd] */
+
+    int32_t n_layer;         /* bookkeeping for safe free */
 } Gpt2Weights;
 
 /* ── API ───────────────────────────────────────────────────────────── */
@@ -80,4 +82,4 @@ Gpt2Weights *gpt2_weights_alloc(const Gpt2Config *cfg);
 }
 #endif
 
-#endif /* NXTLLM_WEIGHT_LOADER_H_ */
+#endif /* XLLM_WEIGHT_LOADER_H_ */

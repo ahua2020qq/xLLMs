@@ -1,15 +1,15 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * nxtLLM Prefix Sharing — Radix-Tree KV-Cache Index
+ * xLLM Prefix Sharing — Radix-Tree KV-Cache Index
  *
  * Implements a radix tree (Patricia trie) over token sequences to enable
  * prefix-aware KV-cache sharing across requests.  Analogue to SGLang's
- * RadixCache, adapted for nxtLLM's three-tier page pool.
+ * RadixCache, adapted for xLLM's three-tier page pool.
  *
  * Each node stores:
  *   - A token-ID fragment (edge label)

@@ -1,19 +1,16 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
- * This header must not be removed. All derivative works must retain this notice.
+ * xLLM Tokenizer — BPE Tokenizer (Llama 3 / GPT-2 style)
  *
- * nxtLLM Tokenizer — GPT-2 BPE Tokenizer
- *
- * Loads GPT-2 vocabulary and merge rules from external files exported
- * by scripts/convert_gpt2_weights.py.  Supports encode (text → token ids)
- * and decode (token ids → text).
+ * Loads vocabulary and BPE merge rules from a GGUF model file.
+ * Supports encode (text → token ids) and decode (token ids → text).
  */
 
-#ifndef NXTLLM_TOKENIZER_H_
-#define NXTLLM_TOKENIZER_H_
+#ifndef XLLM_TOKENIZER_H_
+#define XLLM_TOKENIZER_H_
 
 #include <stdint.h>
 #include <stddef.h>
@@ -23,57 +20,50 @@
 extern "C" {
 #endif
 
-#define GPT2_VOCAB_SIZE   50257
-#define GPT2_MAX_TOKEN_LEN 64
-#define GPT2_MAX_ENCODED   2048
+#define XLLM_MAX_TOKEN_LEN   128
+#define XLLM_MAX_ENCODED     2048
 
-/* ── Single vocabulary entry ────────────────────────────────────────── */
 typedef struct {
-    char   token_str[GPT2_MAX_TOKEN_LEN];
+    char   *str;         /* token string (owned) */
     int32_t id;
-} TokenizerEntry;
+} TokenEntry;
 
-/* ── BPE merge rule ─────────────────────────────────────────────────── */
 typedef struct {
-    char pair[2][GPT2_MAX_TOKEN_LEN];
-    int32_t priority;
-} BpeMergeRule;
+    char   *left;        /* left part of merge (owned) */
+    char   *right;       /* right part of merge (owned) */
+    int32_t priority;    /* lower = higher priority */
+} BpeMerge;
 
-/* ── Tokenizer state ────────────────────────────────────────────────── */
 typedef struct {
-    TokenizerEntry *vocab;       /* id → token string */
-    int32_t         vocab_size;
+    TokenEntry *vocab;       /* id → token string, size=vocab_size */
+    int32_t     vocab_size;
 
-    BpeMergeRule   *merges;      /* BPE merge rules sorted by priority */
-    int32_t         num_merges;
+    BpeMerge   *merges;      /* BPE merge rules */
+    int32_t     num_merges;
 
-    /* Internal lookup tables */
-    /* ... reserved for future speed-ups ... */
-} Gpt2Tokenizer;
+    int32_t     bos_token_id;
+    int32_t     eos_token_id;
+    int32_t     pad_token_id;
 
-/* ── API ────────────────────────────────────────────────────────────── */
+    int32_t     byte_token_id[256]; /* byte value → token id (GPT-2 mapping) */
+} XllmTokenizer;
 
-/** Load tokenizer from vocab.json and merges.txt files.
- *  These files are exported by scripts/convert_gpt2_weights.py. */
-Gpt2Tokenizer *gpt2_tokenizer_load(const char *vocab_path,
-                                   const char *merges_path);
+/** Load tokenizer directly from a GGUF model file. */
+XllmTokenizer *xllm_tokenizer_load_from_gguf(const char *gguf_path);
 
 /** Free tokenizer resources. */
-void gpt2_tokenizer_free(Gpt2Tokenizer *tok);
+void xllm_tokenizer_free(XllmTokenizer *tok);
 
-/** Encode a UTF-8 string into token IDs.  Returns number of tokens. */
-int32_t gpt2_tokenizer_encode(Gpt2Tokenizer *tok, const char *text,
-                              int32_t *token_ids, int32_t max_tokens);
+/** Encode a UTF-8 string into token IDs. Returns number of tokens written. */
+int32_t xllm_tokenizer_encode(XllmTokenizer *tok, const char *text,
+                               int32_t *token_ids, int32_t max_tokens);
 
-/** Decode token IDs back to a string.  Returns length written. */
-int32_t gpt2_tokenizer_decode(Gpt2Tokenizer *tok, const int32_t *token_ids,
-                              int32_t num_tokens, char *out, int32_t max_len);
-
-/** Create a minimal built-in tokenizer for demo/testing (no external files). */
-Gpt2Tokenizer *gpt2_tokenizer_create_minimal(void);
+/** Decode token IDs back to a string. Returns length written (excluding null). */
+int32_t xllm_tokenizer_decode(XllmTokenizer *tok, const int32_t *token_ids,
+                               int32_t num_tokens, char *out, int32_t max_len);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* NXTLLM_TOKENIZER_H_ */
+#endif /* XLLM_TOKENIZER_H_ */

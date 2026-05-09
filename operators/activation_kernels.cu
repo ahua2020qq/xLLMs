@@ -1,11 +1,11 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * Activation Kernels — Adapted for nxtLLM
+ * Activation Kernels — Adapted for xLLM
  * Original source: vLLM csrc/activation_kernels.cu
  * Copyright (c) 2023, The vLLM team.
  *
@@ -17,6 +17,9 @@
 #include <cmath>
 
 #include "operator_api.h"
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 // ── SiLU (Sigmoid Linear Unit) ─────────────────────────────────────────
 template <typename T>

@@ -1,11 +1,11 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * Paged Attention Kernel — Adapted for nxtLLM
+ * Paged Attention Kernel — Adapted for xLLM
  * Original source: vLLM csrc/attention/paged_attention_v1.cu
  * Copyright (c) 2023, The vLLM team.
  * Copyright (c) 2020-2023, NVIDIA CORPORATION.  All rights reserved.
@@ -38,8 +38,8 @@ __device__ __forceinline__ float4 fma(float4 a, float4 b, float4 c) {
 // ── Utility: float4 to half4 ───────────────────────────────────────────
 __device__ __forceinline__ void float4_to_half4(uint2* out, const float4* in) {
     half2* dst = reinterpret_cast<half2*>(out);
-    dst[0] = __float2half2_rn(in->x, in->y);
-    dst[1] = __float2half2_rn(in->z, in->w);
+    dst[0] = __halves2half2(__float2half_rn(in->x), __float2half_rn(in->y));
+    dst[1] = __halves2half2(__float2half_rn(in->z), __float2half_rn(in->w));
 }
 
 // ── Paged Attention V1 Kernel ──────────────────────────────────────────
@@ -81,7 +81,8 @@ __global__ void paged_attention_v1_kernel(
     float qk_max = -1e9f;
     float sum_exp = 0.0f;
 
-    float out_vals[ROWS_PER_WARP];
+    constexpr int SAFE_ROWS = ROWS_PER_WARP > 0 ? ROWS_PER_WARP : 1;
+    float out_vals[SAFE_ROWS];
 #pragma unroll
     for (int i = 0; i < ROWS_PER_WARP; i++) {
         out_vals[i] = 0.0f;
@@ -89,7 +90,8 @@ __global__ void paged_attention_v1_kernel(
 
     // ── Load query for this head ──────────────────────────────────────
     const scalar_t* q_ptr = query + seq_idx * q_stride + head_idx * HEAD_SIZE;
-    float q[HEAD_SIZE / NUM_THREADS];
+    constexpr int Q_ELEMS = (HEAD_SIZE + NUM_THREADS - 1) / NUM_THREADS;
+    float q[Q_ELEMS];
 #pragma unroll
     for (int i = 0; i < HEAD_SIZE / NUM_THREADS; i++) {
         int idx = thread_idx + i * NUM_THREADS;
@@ -307,22 +309,6 @@ void nxt_paged_attention(
                 break;
             case 128:
                 paged_attention_v1_kernel<scalar_t, cache_t, 128, 16, 128>
-                    <<<grid, block, shared_mem_size, stream>>>(
-                        (scalar_t*)out, (const scalar_t*)query,
-                        (const cache_t*)key_cache, (const cache_t*)value_cache,
-                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
-                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
-                break;
-            case 192:
-                paged_attention_v1_kernel<scalar_t, cache_t, 192, 16, 128>
-                    <<<grid, block, shared_mem_size, stream>>>(
-                        (scalar_t*)out, (const scalar_t*)query,
-                        (const cache_t*)key_cache, (const cache_t*)value_cache,
-                        block_tables, seq_lens, max_num_blocks_per_seq, scale,
-                        num_kv_heads, q_stride, kv_block_stride, kv_head_stride);
-                break;
-            case 256:
-                paged_attention_v1_kernel<scalar_t, cache_t, 256, 16, 128>
                     <<<grid, block, shared_mem_size, stream>>>(
                         (scalar_t*)out, (const scalar_t*)query,
                         (const cache_t*)key_cache, (const cache_t*)value_cache,

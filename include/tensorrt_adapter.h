@@ -1,12 +1,12 @@
-#ifndef NXTLLM_TENSORRT_ADAPTER_H
-#define NXTLLM_TENSORRT_ADAPTER_H
+#ifndef XLLM_TENSORRT_ADAPTER_H
+#define XLLM_TENSORRT_ADAPTER_H
 
 /*
  * tensorrt_adapter.h — TensorRT-LLM Stub Adapter Interface
  *
  * This header defines the minimum interface for optionally integrating
  * TensorRT-LLM optimizations (layer fusion, quantization, CUDA Graph,
- * in-flight batching) into nxtLLM. When NXTLLM_HAS_TENSORRT is not defined,
+ * in-flight batching) into xLLM. When XLLM_HAS_TENSORRT is not defined,
  * all functions are no-op stubs that allow the codebase to compile
  * without TensorRT dependencies.
  *
@@ -27,13 +27,13 @@ extern "C" {
 
 /* ── Compile-time feature detection ─────────────────────────────────── */
 
-#ifdef NXTLLM_HAS_TENSORRT
-#  define NXTLLM_TR_VERSION_MAJOR 0
-#  define NXTLLM_TR_VERSION_MINOR 1
-#  define NXTLLM_TR_VERSION_PATCH 0
-#  define NXTLLM_TR_HAS_QUANT     1
-#  define NXTLLM_TR_HAS_CUDA_GRAPH 0
-#  define NXTLLM_TR_HAS_INFLIGHT_BATCHING 0
+#ifdef XLLM_HAS_TENSORRT
+#  define XLLM_TR_VERSION_MAJOR 0
+#  define XLLM_TR_VERSION_MINOR 1
+#  define XLLM_TR_VERSION_PATCH 0
+#  define XLLM_TR_HAS_QUANT     1
+#  define XLLM_TR_HAS_CUDA_GRAPH 0
+#  define XLLM_TR_HAS_INFLIGHT_BATCHING 0
 #endif
 
 /* ── Error codes ────────────────────────────────────────────────────── */
@@ -110,13 +110,13 @@ typedef struct tr_executor tr_executor_t;
 /* ── Builder API ────────────────────────────────────────────────────── */
 
 /** Create a TRT engine builder from config.
- *  Returns NULL (stub) when NXTLLM_HAS_TENSORRT is not defined. */
+ *  Returns NULL (stub) when XLLM_HAS_TENSORRT is not defined. */
 tr_runtime_t* tr_builder_build(const tr_builder_config_t* config);
 
 /** Serialize built engine to file. Returns TR_ADAPTER_ERR_NOT_SUPPORTED in stub mode. */
 tr_adapter_status_t tr_builder_serialize(const tr_runtime_t* runtime, const char* path);
 
-/** Load engine from serialized file. Returns NULL (stub) when NXTLLM_HAS_TENSORRT is not defined. */
+/** Load engine from serialized file. Returns NULL (stub) when XLLM_HAS_TENSORRT is not defined. */
 tr_runtime_t* tr_runtime_load(const char* path);
 
 /** Destroy runtime and free resources. */
@@ -213,4 +213,4 @@ void tr_executor_destroy(tr_executor_t* executor);
 }
 #endif
 
-#endif /* NXTLLM_TENSORRT_ADAPTER_H */
+#endif /* XLLM_TENSORRT_ADAPTER_H */

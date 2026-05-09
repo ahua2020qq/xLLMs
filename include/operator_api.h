@@ -1,23 +1,23 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * nxtLLM Operator API — Adapter Header
+ * xLLM Operator API — Adapter Header
  *
  * Provides a unified C API for GPU operators (paged attention,
  * activation functions, quantization kernels) consumed by the
- * nxtLLM inference engine.
+ * xLLM inference engine.
  *
  * All functions accept void* tensor pointers so callers are not
  * required to include CUDA headers directly.  The dtype_size
  * parameter distinguishes fp16 (2), fp32 (4), bf16 (2).
  */
 
-#ifndef NXTLLM_OPERATOR_API_H_
-#define NXTLLM_OPERATOR_API_H_
+#ifndef XLLM_OPERATOR_API_H_
+#define XLLM_OPERATOR_API_H_
 
 #ifdef __cplusplus
 extern "C" {
@@ -153,4 +153,4 @@ void nxt_silu_elementwise(void* out, const void* input,
 }
 #endif
 
-#endif  // NXTLLM_OPERATOR_API_H_
+#endif  // XLLM_OPERATOR_API_H_

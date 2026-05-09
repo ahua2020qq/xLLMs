@@ -1,14 +1,14 @@
-# nxtLLM — Next-Generation LLM Inference Engine
+# xLLM — Next-Generation LLM Inference Engine
 # Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
 # SPDX-License-Identifier: Apache-2.0
 #
 # This header must not be removed. All derivative works must retain this notice.
 
 # SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the nxtLLM project
+# SPDX-FileCopyrightText: Copyright contributors to the xLLM project
 # Adapted from vLLM vllm/config/cache.py
 
-"""KV-cache configuration for nxtLLM inference engine."""
+"""KV-cache configuration for xLLM inference engine."""
 
 from dataclasses import dataclass, field
 from typing import ClassVar, Literal, Optional
@@ -28,11 +28,11 @@ PrefixCachingHashAlgo = Literal["sha256", "xxhash"]
 
 @dataclass
 class CacheConfig:
-    """Configuration for the KV cache in nxtLLM.
+    """Configuration for the KV cache in xLLM.
 
     Controls block size, memory utilization, data type, and prefix
     caching behaviour. Integrates with the multi-tier memory manager
-    (GPU HBM → CPU DRAM → NVMe SSD) introduced in nxtLLM v0.1.
+    (GPU HBM → CPU DRAM → NVMe SSD) introduced in xLLM v0.1.
     """
 
     DEFAULT_BLOCK_SIZE: ClassVar[int] = 16
@@ -62,7 +62,7 @@ class CacheConfig:
     """Number of CPU blocks (set after profiling)."""
 
     num_ssd_blocks: Optional[int] = field(default=None, init=False)
-    """Number of SSD blocks (set after profiling). nxtLLM extension."""
+    """Number of SSD blocks (set after profiling). xLLM extension."""
 
     def effective_block_size(self) -> int:
         """Return the resolved block size, ensuring a minimum of 8."""

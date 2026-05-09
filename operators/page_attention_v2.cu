@@ -1,5 +1,5 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -61,7 +61,7 @@ __device__ __forceinline__ void cp_async_cg(const void *dst, const void *src, bo
                  "  .reg .pred p;\n"
                  "  setp.ne.b32 p, %0, 0;\n"
                  "  @p cp.async.ca.shared.global [%1], [%2], 16;\n"
-                 "}\n" ::"r"((int)predicate), "r"((size_t)dst), "l"(src));
+                 "}\n" ::"r"((int)predicate), "l"(dst), "l"(src));
 }
 
 // ── Paged Attention V2 Kernel ──────────────────────────────────────────
@@ -125,7 +125,8 @@ __global__ void paged_attention_v2_kernel(
     // ── Online softmax state ───────────────────────────────────────────
     float m_prev = -1e38f;
     float d_prev = 0.0f;
-    float o_vals[HEAD_DIM / D_THREADS];
+    constexpr int O_ELEMS_PER_THREAD = (HEAD_DIM + D_THREADS - 1) / D_THREADS;
+    float o_vals[O_ELEMS_PER_THREAD];
     #pragma unroll
     for (int i = 0; i < HEAD_DIM / D_THREADS; i++) {
         o_vals[i] = 0.0f;
@@ -330,8 +331,6 @@ void nxt_paged_attention_v2(
                 case 96:  V2_LAUNCH_F32(GS, 96);  break;  \
                 case 112: V2_LAUNCH_F32(GS, 112); break;  \
                 case 128: V2_LAUNCH_F32(GS, 128); break;  \
-                case 192: V2_LAUNCH_F32(GS, 192); break;  \
-                case 256: V2_LAUNCH_F32(GS, 256); break;  \
                 default:  V2_LAUNCH_F32(GS, 64);  break;   \
             }
 

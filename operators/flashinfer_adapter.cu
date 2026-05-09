@@ -1,5 +1,5 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -8,7 +8,7 @@
  * FlashInfer-Style Paged Attention Adapter
  *
  * Implements nxt_paged_attention_flash — a batch-decode kernel inspired by
- * FlashInfer's BatchDecodeWithPagedKVCacheDevice but adapted for nxtLLM's
+ * FlashInfer's BatchDecodeWithPagedKVCacheDevice but adapted for xLLM's
  * operator API and build system.
  *
  * Key improvements over the v1 kernel:

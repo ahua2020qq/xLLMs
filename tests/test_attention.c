@@ -1,11 +1,11 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * test_attention.c — Validate nxtLLM paged attention operator API
+ * test_attention.c — Validate xLLM paged attention operator API
  *
  * This is a lightweight C-level smoke test.  Real numerical validation
  * should compare against a PyTorch reference on GPU hardware.
@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <math.h>
 
 #include "operator_api.h"
 
@@ -145,22 +146,22 @@ static int test_paged_attention_cuda_launch(void) {
     const size_t q_bytes = out_bytes;
     const size_t kv_bytes = max_num_blocks_per_seq * kv_block_stride * dtype_size;
 
-    __half *d_out, *d_query, *d_key_cache, *d_value_cache;
+    void *d_out, *d_query, *d_key_cache, *d_value_cache;
     int *d_block_tables, *d_seq_lens;
 
     cudaError_t err;
 
-    err = cudaMalloc(&d_out, out_bytes);
+    err = cudaMalloc((void**)&d_out, out_bytes);
     if (err != cudaSuccess) goto cleanup_none;
-    err = cudaMalloc(&d_query, q_bytes);
+    err = cudaMalloc((void**)&d_query, q_bytes);
     if (err != cudaSuccess) goto cleanup_out;
-    err = cudaMalloc(&d_key_cache, kv_bytes);
+    err = cudaMalloc((void**)&d_key_cache, kv_bytes);
     if (err != cudaSuccess) goto cleanup_query;
-    err = cudaMalloc(&d_value_cache, kv_bytes);
+    err = cudaMalloc((void**)&d_value_cache, kv_bytes);
     if (err != cudaSuccess) goto cleanup_key;
-    err = cudaMalloc(&d_block_tables, num_seqs * max_num_blocks_per_seq * sizeof(int));
+    err = cudaMalloc((void**)&d_block_tables, num_seqs * max_num_blocks_per_seq * sizeof(int));
     if (err != cudaSuccess) goto cleanup_value;
-    err = cudaMalloc(&d_seq_lens, num_seqs * sizeof(int));
+    err = cudaMalloc((void**)&d_seq_lens, num_seqs * sizeof(int));
     if (err != cudaSuccess) goto cleanup_block;
 
     err = cudaMemset(d_out, 0, out_bytes);
@@ -246,18 +247,18 @@ static int test_paged_attention_head_sizes(void) {
         size_t q_bytes = out_bytes;
         size_t kv_bytes = max_blocks * kv_block_stride * ds;
 
-        __half *d_out, *d_query, *d_key, *d_val;
+        void *d_out, *d_query, *d_key, *d_val;
         int *d_bt, *d_sl;
         cudaError_t err;
 
-        if (cudaMalloc(&d_out, out_bytes) != cudaSuccess) { failures++; continue; }
-        if (cudaMalloc(&d_query, q_bytes) != cudaSuccess) { cudaFree(d_out); failures++; continue; }
-        if (cudaMalloc(&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); failures++; continue; }
-        if (cudaMalloc(&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue; }
-        if (cudaMalloc(&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
+        if (cudaMalloc((void**)&d_out, out_bytes) != cudaSuccess) { failures++; continue; }
+        if (cudaMalloc((void**)&d_query, q_bytes) != cudaSuccess) { cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc((void**)&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc((void**)&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc((void**)&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
             cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue;
         }
-        if (cudaMalloc(&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
+        if (cudaMalloc((void**)&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
             cudaFree(d_bt); cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue;
         }
 
@@ -306,18 +307,18 @@ static int test_paged_attention_v2_cuda_launch(void) {
     size_t q_bytes = out_bytes;
     size_t kv_bytes = max_blocks * kv_block_stride * dtype_size;
 
-    __half *d_out, *d_query, *d_key, *d_val;
+    void *d_out, *d_query, *d_key, *d_val;
     int *d_bt, *d_sl;
     cudaError_t err;
 
-    if (cudaMalloc(&d_out, out_bytes) != cudaSuccess) return 1;
-    if (cudaMalloc(&d_query, q_bytes) != cudaSuccess) { cudaFree(d_out); return 1; }
-    if (cudaMalloc(&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); return 1; }
-    if (cudaMalloc(&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1; }
-    if (cudaMalloc(&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
+    if (cudaMalloc((void**)&d_out, out_bytes) != cudaSuccess) return 1;
+    if (cudaMalloc((void**)&d_query, q_bytes) != cudaSuccess) { cudaFree(d_out); return 1; }
+    if (cudaMalloc((void**)&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); return 1; }
+    if (cudaMalloc((void**)&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1; }
+    if (cudaMalloc((void**)&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
         cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1;
     }
-    if (cudaMalloc(&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
+    if (cudaMalloc((void**)&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
         cudaFree(d_bt); cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); return 1;
     }
 
@@ -370,18 +371,18 @@ static int test_paged_attention_v2_head_sizes(void) {
         size_t out_bytes = num_seqs * num_heads * hs * ds;
         size_t kv_bytes = max_blocks * kv_block_stride * ds;
 
-        __half *d_out, *d_query, *d_key, *d_val;
+        void *d_out, *d_query, *d_key, *d_val;
         int *d_bt, *d_sl;
         cudaError_t err;
 
-        if (cudaMalloc(&d_out, out_bytes) != cudaSuccess) { failures++; continue; }
-        if (cudaMalloc(&d_query, out_bytes) != cudaSuccess) { cudaFree(d_out); failures++; continue; }
-        if (cudaMalloc(&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); failures++; continue; }
-        if (cudaMalloc(&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue; }
-        if (cudaMalloc(&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
+        if (cudaMalloc((void**)&d_out, out_bytes) != cudaSuccess) { failures++; continue; }
+        if (cudaMalloc((void**)&d_query, out_bytes) != cudaSuccess) { cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc((void**)&d_key, kv_bytes) != cudaSuccess) { cudaFree(d_query); cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc((void**)&d_val, kv_bytes) != cudaSuccess) { cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue; }
+        if (cudaMalloc((void**)&d_bt, num_seqs * max_blocks * sizeof(int)) != cudaSuccess) {
             cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue;
         }
-        if (cudaMalloc(&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
+        if (cudaMalloc((void**)&d_sl, num_seqs * sizeof(int)) != cudaSuccess) {
             cudaFree(d_bt); cudaFree(d_val); cudaFree(d_key); cudaFree(d_query); cudaFree(d_out); failures++; continue;
         }
 
@@ -416,7 +417,7 @@ static int test_paged_attention_v2_head_sizes(void) {
 int main(void) {
     int failures = 0;
 
-    printf("nxtLLM operator API — signature tests\n");
+    printf("xLLM operator API — signature tests\n");
     printf("======================================\n\n");
 
     #define RUN_TEST(t) do {                              \

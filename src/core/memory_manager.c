@@ -1,5 +1,5 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -422,7 +422,7 @@ void nxt_defrag_background(NxtGlobalBufferPool *pool) {
     // Score-driven: skip defrag when fragmentation is below threshold
     float score = nxt_calc_defrag_score(pool);
     if (score < pool->defrag_threshold) {
-        fprintf(stderr, "[nxtLLM] defrag score %.3f below threshold %.3f, skipping\n",
+        fprintf(stderr, "[xLLM] defrag score %.3f below threshold %.3f, skipping\n",
                 (double)score, (double)pool->defrag_threshold);
         return;
     }
@@ -510,7 +510,7 @@ void nxt_defrag_background(NxtGlobalBufferPool *pool) {
 
     pool->total_defrag_rounds++;
 
-    fprintf(stderr, "[nxtLLM] defrag round %lu complete: "
+    fprintf(stderr, "[xLLM] defrag round %lu complete: "
             "tier_used=[%zu, %zu, %zu] bytes, score=%.3f\n",
             (unsigned long)pool->total_defrag_rounds,
             pool->tier_used[0], pool->tier_used[1], pool->tier_used[2],

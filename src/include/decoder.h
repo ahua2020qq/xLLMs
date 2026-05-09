@@ -1,19 +1,19 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * nxtLLM Autoregressive Decoder — GPT-2 Generation Loop
+ * xLLM Autoregressive Decoder — GPT-2 Generation Loop
  *
  * Implements token-by-token autoregressive generation with KV-cache
  * management.  Each iteration produces one token, updates the cache,
  * and feeds the new token back as input for the next step.
  */
 
-#ifndef NXTLLM_DECODER_H_
-#define NXTLLM_DECODER_H_
+#ifndef XLLM_DECODER_H_
+#define XLLM_DECODER_H_
 
 #include <stdint.h>
 #include "weight_loader.h"
@@ -98,4 +98,4 @@ void gpt2_kv_cache_free(Gpt2KVCache *cache);
 }
 #endif
 
-#endif /* NXTLLM_DECODER_H_ */
+#endif /* XLLM_DECODER_H_ */

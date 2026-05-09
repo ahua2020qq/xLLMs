@@ -3,7 +3,7 @@
  *
  * Tests the stub implementation of tensorrt_adapter.h.
  * All tests pass without TensorRT installed (stub mode).
- * When NXTLLM_HAS_TENSORRT is defined, they validate real TRT behavior.
+ * When XLLM_HAS_TENSORRT is defined, they validate real TRT behavior.
  */
 
 #include <stdio.h>
@@ -126,12 +126,12 @@ static void test_serialize_deserialize_stub(void)
     tr_runtime_t* runtime = tr_builder_build(&cfg);
 
     /* Serialize should fail in stub mode */
-    tr_adapter_status_t s = tr_builder_serialize(runtime, "/tmp/nxtllm_test_trt.engine");
+    tr_adapter_status_t s = tr_builder_serialize(runtime, "/tmp/xllm_test_trt.engine");
     ASSERT(s == TR_ADAPTER_ERR_NOT_SUPPORTED,
            "stub serialize should return NOT_SUPPORTED");
 
     /* Load should return NULL in stub mode */
-    tr_runtime_t* loaded = tr_runtime_load("/tmp/nxtllm_test_trt.engine");
+    tr_runtime_t* loaded = tr_runtime_load("/tmp/xllm_test_trt.engine");
     ASSERT(loaded == NULL, "stub load should return NULL");
 
     tr_runtime_destroy(runtime);
@@ -303,9 +303,9 @@ static void test_error_codes(void)
 
 int main(void)
 {
-    printf("\n=== nxtLLM TensorRT Adapter Integration Tests ===\n");
-    printf("Compiled %s NXTLLM_HAS_TENSORRT\n\n",
-#ifdef NXTLLM_HAS_TENSORRT
+    printf("\n=== xLLM TensorRT Adapter Integration Tests ===\n");
+    printf("Compiled %s XLLM_HAS_TENSORRT\n\n",
+#ifdef XLLM_HAS_TENSORRT
            "with"
 #else
            "without"

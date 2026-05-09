@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# nxtLLM — Next-Generation LLM Inference Engine
+# xLLM — Next-Generation LLM Inference Engine
 # Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
 # SPDX-License-Identifier: Apache-2.0
 #
 # This header must not be removed. All derivative works must retain this notice.
 
 """
-convert_gpt2_weights.py — Convert Hugging Face GPT-2 weights to nxtLLM flat binary.
+convert_gpt2_weights.py — Convert Hugging Face GPT-2 weights to xLLM flat binary.
 
 Usage:
     python scripts/convert_gpt2_weights.py \\
@@ -114,7 +114,7 @@ def convert_model(model_name: str, output_path: str,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert Hugging Face GPT-2 weights to nxtLLM binary format"
+        description="Convert Hugging Face GPT-2 weights to xLLM binary format"
     )
     parser.add_argument("--model", default="gpt2",
                         help="HF model name (default: gpt2)")

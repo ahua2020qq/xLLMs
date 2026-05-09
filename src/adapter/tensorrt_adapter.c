@@ -1,9 +1,9 @@
 /*
  * tensorrt_adapter.c — TensorRT-LLM Stub Implementation
  *
- * All functions return safe defaults when compiled without NXTLLM_HAS_TENSORRT.
+ * All functions return safe defaults when compiled without XLLM_HAS_TENSORRT.
  * This allows the test suite and any calling code to compile and run without
- * TensorRT installed. When NXTLLM_HAS_TENSORRT is defined, this file should be
+ * TensorRT installed. When XLLM_HAS_TENSORRT is defined, this file should be
  * replaced with the real TRT integration (Phase 2+).
  */
 
@@ -20,7 +20,7 @@ struct tr_executor { int dummy; };
 tr_runtime_t* tr_builder_build(const tr_builder_config_t* config)
 {
     (void)config;
-#ifdef NXTLLM_HAS_TENSORRT
+#ifdef XLLM_HAS_TENSORRT
     /* TODO Phase 2+: create TRT builder, set config, build engine */
     return NULL;
 #else
@@ -32,7 +32,7 @@ tr_adapter_status_t tr_builder_serialize(const tr_runtime_t* runtime, const char
 {
     (void)runtime;
     (void)path;
-#ifdef NXTLLM_HAS_TENSORRT
+#ifdef XLLM_HAS_TENSORRT
     /* TODO Phase 2+: serialize engine to file */
     return TR_ADAPTER_ERR_NOT_SUPPORTED;
 #else
@@ -43,7 +43,7 @@ tr_adapter_status_t tr_builder_serialize(const tr_runtime_t* runtime, const char
 tr_runtime_t* tr_runtime_load(const char* path)
 {
     (void)path;
-#ifdef NXTLLM_HAS_TENSORRT
+#ifdef XLLM_HAS_TENSORRT
     /* TODO Phase 2+: deserialize engine from file */
     return NULL;
 #else
@@ -55,7 +55,7 @@ void tr_runtime_destroy(tr_runtime_t* runtime)
 {
     /* Safe no-op on NULL (common in stub mode) */
     if (runtime == NULL) return;
-#ifdef NXTLLM_HAS_TENSORRT
+#ifdef XLLM_HAS_TENSORRT
     /* TODO Phase 2+: free TRT engine and context */
 #endif
 }
@@ -114,7 +114,7 @@ tr_executor_t* tr_executor_create(tr_runtime_t* runtime, size_t max_active_reque
 {
     (void)runtime;
     (void)max_active_requests;
-#ifdef NXTLLM_HAS_TENSORRT
+#ifdef XLLM_HAS_TENSORRT
     /* TODO Phase 5+: create C++ executor wrapper */
     return NULL;
 #else
@@ -167,7 +167,7 @@ tr_adapter_status_t tr_executor_get_stats(tr_executor_t* executor, tr_executor_s
 void tr_executor_destroy(tr_executor_t* executor)
 {
     if (executor == NULL) return;
-#ifdef NXTLLM_HAS_TENSORRT
+#ifdef XLLM_HAS_TENSORRT
     /* TODO Phase 5+: clean up C++ executor */
 #endif
 }

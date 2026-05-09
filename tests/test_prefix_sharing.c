@@ -1,5 +1,5 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -279,7 +279,7 @@ static void test_statistics(void) {
 
 /* ── Test Runner ────────────────────────────────────────────────────── */
 int main(void) {
-    printf("=== nxtLLM Prefix Sharing Test Suite ===\n\n");
+    printf("=== xLLM Prefix Sharing Test Suite ===\n\n");
 
     test_tree_init_destroy();
     test_insert_single();

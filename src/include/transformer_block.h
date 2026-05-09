@@ -1,21 +1,21 @@
 /*
- * nxtLLM — Next-Generation LLM Inference Engine
+ * xLLM — Next-Generation LLM Inference Engine
  * Copyright (c) 2026 Shanye (山野小娃) <ahua2020@qq.com>
  * SPDX-License-Identifier: Apache-2.0
  *
  * This header must not be removed. All derivative works must retain this notice.
  *
- * nxtLLM Transformer Block — GPT-2 Forward Pass
+ * xLLM Transformer Block — GPT-2 Forward Pass
  *
  * Implements a single GPT-2 transformer block:
  *   x = x + attention(ln_1(x))
  *   x = x + mlp(ln_2(x))
  *
- * Uses nxtLLM operator APIs for paged attention and activation functions.
+ * Uses xLLM operator APIs for paged attention and activation functions.
  */
 
-#ifndef NXTLLM_TRANSFORMER_BLOCK_H_
-#define NXTLLM_TRANSFORMER_BLOCK_H_
+#ifndef XLLM_TRANSFORMER_BLOCK_H_
+#define XLLM_TRANSFORMER_BLOCK_H_
 
 #include <stdint.h>
 #include "weight_loader.h"
@@ -101,4 +101,4 @@ void gpt2_gelu(float *x, int n);
 }
 #endif
 
-#endif /* NXTLLM_TRANSFORMER_BLOCK_H_ */
+#endif /* XLLM_TRANSFORMER_BLOCK_H_ */
