@@ -26,3 +26,14 @@ __pycache__/
 *.so
 *.a
 *.exe
+
+# Docs (private, not for open source)
+docs/
+
+# Logs and temp files
+*.log
+*.txt
+
+# Models
+*.gguf
+*.bin
